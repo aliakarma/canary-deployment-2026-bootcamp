@@ -1,0 +1,115 @@
+name: Python Continuous Integration
+
+on:
+  push:
+    branches: [ main, master, ali-akarma/canary-deployment ]
+  pull_request:
+    branches: [ main, master, ali-akarma/canary-deployment ]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Run Tests with Pytest
+      run: |
+        pytest --junitxml=test-results.xml
+
+    - name: Generate Action Summary
+      if: always()
+      run: |
+        python -c "
+        import os, xml.etree.ElementTree as ET
+        summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+        if not summary_file:
+            print('No GITHUB_STEP_SUMMARY environment variable set.')
+            exit(0)
+        
+        with open(summary_file, 'w') as f:
+            f.write('# CI Run Summary (Python ${{ matrix.python-version }})\n\n')
+            
+            # Parse test results
+            if os.path.exists('test-results.xml'):
+                try:
+                    tree = ET.parse('test-results.xml')
+                    root = tree.getroot()
+                    # junitxml root is <testsuites> or <testsuite>
+                    suite = root if root.tag == 'testsuite' else root.find('testsuite')
+                    if suite is not None:
+                        tests = int(suite.attrib.get('tests', 0))
+                        failures = int(suite.attrib.get('failures', 0))
+                        errors = int(suite.attrib.get('errors', 0))
+                        skipped = int(suite.attrib.get('skipped', 0))
+                        passed = tests - failures - errors - skipped
+                        f.write('## Test Execution Results\n')
+                        f.write(f'- **Total Tests**: {tests}\n')
+                        f.write(f'- **Passed**: {passed} ✅\n')
+                        f.write(f'- **Failed**: {failures} ❌\n')
+                        f.write(f'- **Errors**: {errors} ⚠️\n')
+                        f.write(f'- **Skipped**: {skipped} 💤\n\n')
+                except Exception as e:
+                    f.write(f'Error parsing test results: {str(e)}\n\n')
+            else:
+                f.write('## Test Execution Results\nNo test results found.\n\n')
+
+            # Parse coverage
+            if os.path.exists('coverage.xml'):
+                try:
+                    tree = ET.parse('coverage.xml')
+                    root = tree.getroot()
+                    line_rate = float(root.attrib.get('line-rate', 0.0)) * 100
+                    branch_rate = float(root.attrib.get('branch-rate', 0.0)) * 100
+                    f.write('## Code Coverage\n')
+                    f.write(f'- **Line Coverage**: {line_rate:.2f}%\n')
+                    f.write(f'- **Branch Coverage**: {branch_rate:.2f}%\n\n')
+                except Exception as e:
+                    f.write(f'Error parsing coverage results: {str(e)}\n\n')
+            else:
+                f.write('## Code Coverage\nNo coverage results found.\n\n')
+        "
+
+    - name: Upload Test Coverage XML
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-xml-python-${{ matrix.python-version }}
+        path: coverage.xml
+        retention-days: 14
+
+    - name: Upload Test Coverage HTML Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-html-python-${{ matrix.python-version }}
+        path: htmlcov/
+        retention-days: 14
+
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v4
+      if: always()
+      with:
+        files: coverage.xml
+        flags: python-${{ matrix.python-version }}
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
