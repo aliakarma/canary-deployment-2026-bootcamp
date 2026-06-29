@@ -82,7 +82,7 @@ class GovernanceCoordinator:
                 from resilience.policies import QuarantineEscalationPolicy
 
                 self.policies.append(QuarantineEscalationPolicy(quarantine_system))
-        self._last_risk_category: RiskScore | None = None
+        self._last_risk_category: dict[str, RiskScore] = {}
 
     def evaluate_start(
         self,
@@ -187,7 +187,7 @@ class GovernanceCoordinator:
             "current_time": current_time or datetime.datetime.now(),
         }
 
-    def _evaluate_checkpoint(
+    def _evaluate_checkpoint(  # noqa: C901
         self,
         cluster_state: ClusterState,
         deployment_state: DeploymentState,
@@ -203,14 +203,15 @@ class GovernanceCoordinator:
 
         if audit_logger is not None:
             events = audit_logger.get_events()
+            dep_events = [e for e in events if getattr(e, "deployment_id", None) == deployment_id]
             context["recent_rollbacks"] = sum(
                 1
-                for e in events
+                for e in dep_events
                 if getattr(e, "event_type", None) == DeploymentEventType.ROLLBACK_START
             )
             context["recovery_attempts"] = sum(
                 1
-                for e in events
+                for e in dep_events
                 if getattr(e, "event_type", None) == DeploymentEventType.RECOVERY_PLAN_EXECUTE
             )
 
@@ -220,6 +221,7 @@ class GovernanceCoordinator:
         # 1. Log risk score transition
         if audit_logger is not None:
             # Always log risk category transition details
+            last_cat = self._last_risk_category.get(deployment_id)
             audit_logger.log(
                 DeploymentEvent(
                     event_type=DeploymentEventType.RISK_SCORE_TRANSITION,
@@ -227,14 +229,12 @@ class GovernanceCoordinator:
                     details={
                         "checkpoint": checkpoint_name,
                         "risk_score": score,
-                        "previous_category": (
-                            self._last_risk_category.value if self._last_risk_category else "NONE"
-                        ),
+                        "previous_category": (last_cat.value if last_cat else "NONE"),
                         "new_category": category.value,
                     },
                 )
             )
-        self._last_risk_category = category
+        self._last_risk_category[deployment_id] = category
 
         overall_decision = GovernanceDecision.ALLOW
         block_reasons: list[str] = []

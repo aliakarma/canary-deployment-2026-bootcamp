@@ -93,7 +93,9 @@ class RecoveryPlan:
     target_region: str | None
     steps: List[Dict[str, Any]]  # List of recovery steps
     current_step_index: int = 0
-    created_at: datetime.datetime = field(default_factory=datetime.datetime.now)
+    created_at: datetime.datetime = field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
     completed_at: datetime.datetime | None = None
     error_message: str | None = None
 

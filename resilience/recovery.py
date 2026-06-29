@@ -41,6 +41,15 @@ class RecoveryPlanningEngine:
         target_region: str | None = None,
     ) -> RecoveryPlan:
         """Create a recovery plan tailored to the deployment failure context and strategy."""
+        valid_strategies = {
+            "partial_rollback",
+            "staged_recovery",
+            "region_quarantine",
+            "safe_resume",
+        }
+        if strategy not in valid_strategies:
+            raise ValueError(f"Unsupported recovery strategy: '{strategy}'")
+
         plan_id = f"plan-{uuid.uuid4().hex[:8]}"
         steps: List[Dict[str, Any]] = []
 
@@ -104,6 +113,23 @@ class RecoveryPlanningEngine:
                         "description": f"Rollback updated servers in quarantined region: {servers_in_region}.",
                     }
                 )
+                # FIX: In response to chatgpt-codex-connector: Roll back every updated node in regional recovery.
+                # When region_quarantine strategy is chosen, we must also roll back updated servers
+                # in non-quarantined regions to ensure all updated nodes in the deployment are reverted.
+                servers_other = [
+                    s.id
+                    for s in self.cluster.servers
+                    if s.region != target_region and s.id in deployment.servers_updated
+                ]
+                if servers_other:
+                    steps.append(
+                        {
+                            "step_index": 2,
+                            "action": "rollback_batch",
+                            "target": servers_other,
+                            "description": f"Rollback remaining updated servers in other regions: {servers_other}.",
+                        }
+                    )
 
         elif strategy == "safe_resume":
             # Release quarantine and mark deployment paused -> back in progress

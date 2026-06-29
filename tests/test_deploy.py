@@ -968,3 +968,20 @@ class TestRollbackEventSemantics:
 
         # ROLLBACK_INITIATED should NOT be present (no rollback was attempted)
         assert DeploymentEventType.ROLLBACK_INITIATED not in event_types
+
+    def test_zero_health_check_interval_does_not_hang(self, cluster_state: ClusterState) -> None:
+        """Verify that health_check_interval=0 with positive stage_delay_seconds does not hang."""
+        config = DeploymentConfig(
+            target_version="2.0.0",
+            stages=[50, 100],
+            stage_delay_seconds=0.01,  # Positive delay
+            health_check_interval=0.0,  # Zero interval
+        )
+        engine = DeploymentEngine(cluster_state)
+
+        start_time = time.time()
+        result = engine.deploy(config)
+        duration = time.time() - start_time
+
+        assert result.status == DeploymentStatus.COMPLETED
+        assert duration < 1.0

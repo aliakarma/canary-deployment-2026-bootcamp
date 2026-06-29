@@ -104,5 +104,5 @@ class Server:
             "cpu_usage": round(self.cpu_usage, 1),
             "memory_usage": round(self.memory_usage, 1),
             "last_health_check": self.last_health_check.isoformat(),
-            "deployment_history": self.deployment_history,
+            "deployment_history": self.deployment_history.copy(),
         }

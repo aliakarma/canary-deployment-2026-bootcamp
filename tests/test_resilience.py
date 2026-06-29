@@ -137,6 +137,35 @@ class TestResilienceEngine:
             s = cluster_state.get_server(s_id)
             assert s.region != "us-east-1"
 
+    def test_quarantine_routing_rollout_completion(self, cluster_state: ClusterState) -> None:
+        """Verify that a deployment completes successfully with quarantined capacity."""
+        quarantine = RegionQuarantineSystem(cluster_state)
+        quarantine.quarantine_region("us-east-1", "Manual isolation")
+
+        config = DeploymentConfig(
+            target_version="2.0.0",
+            stages=[50, 100],
+            stage_delay_seconds=0.0,
+            quarantine_system=quarantine,
+        )
+
+        engine = DeploymentEngine(cluster_state)
+        result = engine.deploy(config)
+
+        # The deployment must complete successfully
+        assert result.status.value == "completed"
+
+        # Verify that all updated servers are non-quarantined
+        for s_id in result.servers_updated:
+            s = cluster_state.get_server(s_id)
+            assert s.region != "us-east-1"
+            assert s.current_version == "2.0.0"
+
+        # Verify that all quarantined servers remain on their original version
+        us_east_servers = [s for s in cluster_state.servers if s.region == "us-east-1"]
+        for s in us_east_servers:
+            assert s.current_version == "1.0.0"
+
     # ------------------------------------------------------------------
     # 3. Recovery Planning Tests
     # ------------------------------------------------------------------
@@ -196,6 +225,50 @@ class TestResilienceEngine:
         success = recovery.execute_recovery_plan(plan, deployment)
         assert success is False
         assert plan.status == RecoveryPlanStatus.FAILED
+
+    def test_recovery_plan_region_quarantine_multi_region(
+        self, cluster_state: ClusterState
+    ) -> None:
+        """Verify region_quarantine strategy rolls back servers in target and other regions."""
+        quarantine = RegionQuarantineSystem(cluster_state)
+        recovery = RecoveryPlanningEngine(cluster_state, quarantine)
+
+        config = DeploymentConfig(target_version="2.0.0", stages=[100])
+        engine = DeploymentEngine(cluster_state)
+        deployment = engine._init_deployment(config)
+
+        # Set up servers in different regions
+        servers = cluster_state.servers
+        srv_us_east = [s for s in servers if s.region == "us-east-1"][0]
+        srv_other = [s for s in servers if s.region != "us-east-1"][0]
+
+        cluster_state.update_server_version(srv_us_east.id, "2.0.0")
+        deployment.servers_updated.add(srv_us_east.id)
+
+        cluster_state.update_server_version(srv_other.id, "2.0.0")
+        deployment.servers_updated.add(srv_other.id)
+
+        # Generate recovery plan with region_quarantine strategy targeting 'us-east-1'
+        plan = recovery.generate_plan(deployment, "region_quarantine", target_region="us-east-1")
+
+        # We expect 3 steps: quarantine, rollback us-east-1 servers, rollback other servers
+        assert len(plan.steps) == 3
+        assert plan.steps[0]["action"] == "quarantine_region"
+        assert plan.steps[0]["target"] == "us-east-1"
+        assert plan.steps[1]["action"] == "rollback_batch"
+        assert srv_us_east.id in plan.steps[1]["target"]
+        assert plan.steps[2]["action"] == "rollback_batch"
+        assert srv_other.id in plan.steps[2]["target"]
+
+        # Run recovery plan
+        success = recovery.execute_recovery_plan(plan, deployment)
+        assert success is True
+
+        # All updated servers must be rolled back to "1.0.0"
+        assert cluster_state.get_server(srv_us_east.id).current_version == "1.0.0"
+        assert cluster_state.get_server(srv_other.id).current_version == "1.0.0"
+        # Region must be quarantined
+        assert quarantine.is_quarantined("us-east-1") is True
 
     # ------------------------------------------------------------------
     # 4. Event Replay Tests
@@ -268,6 +341,27 @@ class TestResilienceEngine:
         is_valid, errors = replay.verify_event_lineage(events)
         assert is_valid is False
         assert len(errors) > 0
+
+        # Disconnected loop cycle scenario
+        cycle_events = [
+            {
+                "event_id": "evt-c1",
+                "parent_event_id": "evt-c2",
+                "timestamp": "2026-06-17T12:00:00Z",
+                "event_type": "stage_transition",
+                "deployment_id": "dep-1",
+            },
+            {
+                "event_id": "evt-c2",
+                "parent_event_id": "evt-c1",
+                "timestamp": "2026-06-17T12:01:00Z",
+                "event_type": "stage_transition",
+                "deployment_id": "dep-1",
+            },
+        ]
+        is_valid_cycle, cycle_errors = replay.verify_event_lineage(cycle_events)
+        assert is_valid_cycle is False
+        assert any("Causality loop detected" in err or "cycle" in err for err in cycle_errors)
 
     # ------------------------------------------------------------------
     # 5. Resilience Policies Tests

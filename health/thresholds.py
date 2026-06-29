@@ -40,8 +40,14 @@ class HealthThresholds:
 
     def __post_init__(self) -> None:
         """Validate thresholds on initialization."""
+        import math
+
         for name, val in self.__dict__.items():
+            if isinstance(val, bool):
+                raise TypeError(f"Threshold '{name}' must be numeric, got {type(val)}")
             if isinstance(val, (int, float)):
+                if not math.isfinite(val):
+                    raise ValueError(f"Threshold '{name}' must be finite, got {val}")
                 if val < 0:
                     raise ValueError(f"Threshold '{name}' must be non-negative, got {val}")
                 if "percentage" in name or "usage" in name or "rate" in name:

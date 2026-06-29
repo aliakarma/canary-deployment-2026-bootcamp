@@ -4,7 +4,7 @@ Operational Observability Layer for aggregating metrics and analyzing trends fro
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set, Tuple
 
 from logging_config import get_logger
 
@@ -17,7 +17,7 @@ class OperationalObservabilityLayer:
     def __init__(self) -> None:
         self.metrics: Dict[str, Any] = {}
 
-    def aggregate_metrics(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def aggregate_metrics(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:  # noqa: C901
         """Process a list of events to calculate rollout statistics."""
         total_deployments = 0
         completions = 0
@@ -34,6 +34,7 @@ class OperationalObservabilityLayer:
         risk_scores: List[float] = []
         failure_regions: Dict[str, int] = {}
         violated_policies: Dict[str, int] = {}
+        seen_incident_regions: Set[Tuple[str, str]] = set()
 
         for ev in events:
             evt_type = ev.get("event_type")
@@ -86,7 +87,11 @@ class OperationalObservabilityLayer:
                 # Extract region from message if present
                 for reg in ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"):
                     if reg in reason:
-                        failure_regions[reg] = failure_regions.get(reg, 0) + 1
+                        deployment_id = ev.get("deployment_id", "unknown")
+                        key = (deployment_id, reg)
+                        if key not in seen_incident_regions:
+                            seen_incident_regions.add(key)
+                            failure_regions[reg] = failure_regions.get(reg, 0) + 1
 
         avg_duration = sum(durations) / len(durations) if durations else 0.0
         avg_risk = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0

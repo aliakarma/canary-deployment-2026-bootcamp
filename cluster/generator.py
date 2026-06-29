@@ -78,7 +78,7 @@ def generate_cluster(
     now = datetime.now()
 
     for i in range(1, size + 1):
-        region = REGIONS[i % len(REGIONS)]
+        region = REGIONS[(i - 1) % len(REGIONS)]
         subdomain = _REGION_SUBDOMAINS[region]
         server_id = f"server-{i:03d}"
 

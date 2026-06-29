@@ -45,6 +45,10 @@ def inject_failures(
     if not (0.0 <= failure_rate <= 1.0):
         raise ValueError(f"failure_rate must be between 0.0 and 1.0, got {failure_rate}")
 
+    valid_failure_types = {"degrade", "fail", "resource_spike"}
+    if failure_type not in valid_failure_types:
+        raise ValueError(f"Unknown failure_type: {failure_type}")
+
     # Gather matching candidate servers
     servers = cluster_state.servers
     if target_version is not None:

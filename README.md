@@ -1,9 +1,9 @@
 # Canary Deployment Simulator
 
-[![Python CI](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/ci.yml/badge.svg)](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/ci.yml)
-[![Code Quality](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/quality.yml/badge.svg)](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/quality.yml)
-[![Release Validation](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/release_validation.yml/badge.svg)](https://github.com/aliakarma/bootcamp-2026-canary-deployment/actions/workflows/release_validation.yml)
-[![Code Coverage](https://codecov.io/gh/aliakarma/bootcamp-2026-canary-deployment/branch/main/graph/badge.svg)](https://codecov.io/gh/aliakarma/bootcamp-2026-canary-deployment)
+[![Python CI](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/ci.yml/badge.svg)](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/quality.yml/badge.svg)](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/quality.yml)
+[![Release Validation](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/release_validation.yml/badge.svg)](https://github.com/aliakarma/canary-deployment-2026-bootcamp/actions/workflows/release_validation.yml)
+[![Code Coverage](https://codecov.io/gh/aliakarma/canary-deployment-2026-bootcamp/branch/main/graph/badge.svg)](https://codecov.io/gh/aliakarma/canary-deployment-2026-bootcamp)
 
 A governance-aware, resilience-oriented autonomous deployment coordination simulator with operational auditability, rollback governance, deterministic replay, and reliability-aware orchestration.
 

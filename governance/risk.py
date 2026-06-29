@@ -18,7 +18,9 @@ class RiskEngine:
 
     def __init__(self, critical_regions: set[str] | None = None) -> None:
         """Initialize RiskEngine with optional custom critical regions."""
-        self.critical_regions = critical_regions or {"us-east-1", "us-west-2"}
+        self.critical_regions = (
+            critical_regions if critical_regions is not None else {"us-east-1", "us-west-2"}
+        )
 
     def calculate_risk(
         self,

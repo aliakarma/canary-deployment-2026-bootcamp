@@ -123,7 +123,6 @@ class AuditLogger:
             event: The DeploymentEvent to log.
         """
         with self._lock:
-            self._events.append(event)
             if self.file_path:
                 try:
                     if not self._dir_ready:
@@ -139,6 +138,8 @@ class AuditLogger:
                         self.file_path,
                         exc,
                     )
+                    raise exc
+            self._events.append(event)
 
     def close(self) -> None:
         """Release audit resources.

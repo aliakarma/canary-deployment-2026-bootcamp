@@ -67,6 +67,24 @@ class ConsoleAbortListener:
         with self._lock:
             self._stop_requested = True
             self._current_event = None
+            if self._input_stream is not sys.stdin:
+                try:
+                    self._input_stream.close()
+                except Exception:
+                    pass
+
+        # Join the thread to ensure cleanup and reset self._thread
+        thread_to_join = None
+        with self._lock:
+            if self._thread is not None:
+                thread_to_join = self._thread
+
+        if thread_to_join is not None:
+            thread_to_join.join(timeout=0.1)
+
+        with self._lock:
+            self._thread = None
+
         logger.debug("Stop requested for abort listener thread")
 
     def set_abort_event(self, event: threading.Event) -> None:

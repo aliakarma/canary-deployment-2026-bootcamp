@@ -67,12 +67,16 @@ class _ColourFormatter(logging.Formatter):
         super().__init__(fmt, datefmt)
 
     def format(self, record: logging.LogRecord) -> str:
-        if _SUPPORTS_COLOUR:
-            colour = self.COLOURS.get(record.levelno, self.RESET)
-            record.levelname = f"{colour}{record.levelname:<8}{self.RESET}"
-        else:
-            record.levelname = f"{record.levelname:<8}"
-        return super().format(record)
+        orig_levelname = record.levelname
+        try:
+            if _SUPPORTS_COLOUR:
+                colour = self.COLOURS.get(record.levelno, self.RESET)
+                record.levelname = f"{colour}{orig_levelname:<8}{self.RESET}"
+            else:
+                record.levelname = f"{orig_levelname:<8}"
+            return super().format(record)
+        finally:
+            record.levelname = orig_levelname
 
 
 # ---------------------------------------------------------------------------

@@ -89,9 +89,14 @@ def inspect_cluster(state: ClusterState, *, verbose: bool = False) -> str:
     Returns:
         The formatted report as a string (also printed to stdout).
     """
-    summary = state.get_deployment_summary()
     servers = state.servers
-    total = state.size
+    total = len(servers)
+    versions: dict[str, int] = {}
+    statuses: dict[str, int] = {}
+    for s in servers:
+        versions[s.current_version] = versions.get(s.current_version, 0) + 1
+        statuses[s.status.value] = statuses.get(s.status.value, 0) + 1
+    summary = {"versions": versions, "statuses": statuses}
 
     lines: list[str] = []
 
@@ -172,7 +177,8 @@ def inspect_cluster(state: ClusterState, *, verbose: bool = False) -> str:
     try:
         print(report)
     except UnicodeEncodeError:
-        sys.stdout.write(report.encode("utf-8", errors="replace").decode("utf-8") + "\n")
+        encoding = sys.stdout.encoding or "utf-8"
+        sys.stdout.write(report.encode(encoding, errors="replace").decode(encoding) + "\n")
     logger.debug("Cluster inspection report generated (%d servers)", total)
     return report
 

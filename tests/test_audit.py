@@ -9,7 +9,6 @@ import json
 import os
 import tempfile
 import threading
-import time
 
 from cluster.generator import generate_cluster
 from cluster.state import ClusterState
@@ -156,12 +155,14 @@ class TestAuditLogging:
         cluster = ClusterState(generate_cluster(size=10, seed=42))
         audit = AuditLogger()
         abort_ev = threading.Event()
+        stage_done_event = threading.Event()
         config = DeploymentConfig(
             target_version="2.0.0",
             stages=[50, 100],
             stage_delay_seconds=10.0,  # Ensure we have time to abort during delay
             abort_event=abort_ev,
             audit_logger=audit,
+            on_stage_complete=lambda stage_idx, target_pct, servers_count: stage_done_event.set(),
         )
         engine = DeploymentEngine(cluster)
 
@@ -175,9 +176,10 @@ class TestAuditLogging:
         t.start()
 
         # Wait until stage 0 executes, then abort
-        time.sleep(0.3)
+        assert stage_done_event.wait(timeout=5.0) is True
         abort_ev.set()
-        t.join()
+        t.join(timeout=5.0)
+        assert not t.is_alive()
 
         res = res_container[0]
         assert res.status == DeploymentStatus.ABORTED

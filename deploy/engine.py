@@ -61,6 +61,7 @@ class DeploymentEngine:
         self._current_deployment: DeploymentState | None = None
         self._current_config: DeploymentConfig | None = None
         self._last_event_id: str | None = None
+        self._last_audit_logger: Any | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -93,11 +94,14 @@ class DeploymentEngine:
         from deploy.rollback import rollback as run_rollback
 
         logger_to_use = audit_logger
-        if logger_to_use is None and self._current_config is not None:
-            logger_to_use = self._current_config.audit_logger
+        if logger_to_use is None:
+            if self._current_config is not None:
+                logger_to_use = self._current_config.audit_logger
+            else:
+                logger_to_use = self._last_audit_logger
         return run_rollback(self._cluster, deployment, force=force, audit_logger=logger_to_use)
 
-    def deploy(self, config: DeploymentConfig) -> DeploymentState:
+    def deploy(self, config: DeploymentConfig) -> DeploymentState:  # noqa: C901
         """Execute a full canary deployment.
 
         This method runs synchronously through all stages defined in
@@ -117,6 +121,7 @@ class DeploymentEngine:
         self._current_deployment = deployment
         self._current_config = config
         self._last_event_id = None
+        self._last_audit_logger = config.audit_logger
 
         logger.info("=" * 60)
         logger.info(
@@ -453,9 +458,28 @@ class DeploymentEngine:
         )
 
         # Calculate how many servers should be updated cumulatively
-        target_count = math.ceil(deployment.total_servers * target_pct / 100)
+        # Base quarantined rollouts on eligible (non-quarantined) capacity
+        quarantined = set()
+        if config.quarantine_system is not None:
+            quarantined = config.quarantine_system.get_quarantined_regions()
+
+        # FIX: Base quarantined rollouts on eligible capacity, resolving P2 review comment.
+        # When quarantine_system is active, we must exclude servers in quarantined regions
+        # from both the total eligible capacity and the currently updated eligible count.
+        eligible_servers = [s for s in self._cluster.servers if s.region not in quarantined]
+        eligible_total = len(eligible_servers)
+
+        eligible_updated = len(
+            [
+                s
+                for s in self._cluster.servers
+                if s.id in deployment.servers_updated and s.region not in quarantined
+            ]
+        )
+
+        target_count = math.ceil(eligible_total * target_pct / 100)
         already_updated = len(deployment.servers_updated)
-        servers_needed = target_count - already_updated
+        servers_needed = target_count - eligible_updated
 
         if servers_needed <= 0:
             logger.info(
@@ -617,7 +641,15 @@ class DeploymentEngine:
         else:
             # Simple sleep, but in small increments to stay responsive
             elapsed = 0.0
-            increment = min(config.health_check_interval, delay)
+            interval = config.health_check_interval
+            # FIX: Avoid zero-length inter-stage sleeps, resolving P2 review comment.
+            # If health_check_interval is <= 0, we fall back to using the full delay (which is > 0)
+            # as the increment to avoid infinite loop.
+            if interval <= 0:
+                increment = delay
+            else:
+                increment = min(interval, delay)
+
             while elapsed < delay:
                 time.sleep(increment)
                 elapsed += increment
@@ -660,15 +692,18 @@ class DeploymentEngine:
             DeploymentEventType.ROLLBACK_INITIATED,
             {"reason": reason, "stage_index": deployment.current_stage_index},
         )
-        self._rollback_updated_servers(deployment)
-        deployment.mark_rolled_back()
-        logger.info(
-            "ROLLBACK COMPLETE: %d servers reverted to %s",
-            len(deployment.servers_updated),
-            deployment.source_version,
-        )
+        success = self._rollback_updated_servers(deployment)
+        if success:
+            deployment.mark_rolled_back()
+            logger.info(
+                "ROLLBACK COMPLETE: %d servers reverted to %s",
+                len(deployment.servers_updated),
+                deployment.source_version,
+            )
+        else:
+            logger.error("ROLLBACK FAILED: some servers could not be reverted")
 
-    def _rollback_updated_servers(self, deployment: DeploymentState) -> None:
+    def _rollback_updated_servers(self, deployment: DeploymentState) -> bool:
         """Revert all servers that were updated during this deployment."""
         # Checkpoint: evaluate_rollback
         if (
@@ -713,6 +748,7 @@ class DeploymentEngine:
 
         run_recovery = False
         rolled_back_ids = []
+        all_success = True
 
         if self._current_config is not None and self._current_config.quarantine_system is not None:
             from resilience.recovery import RecoveryPlanningEngine
@@ -756,7 +792,10 @@ class DeploymentEngine:
                     "steps_completed": plan.current_step_index,
                 },
             )
-            run_recovery = True
+            if success:
+                run_recovery = True
+            else:
+                all_success = False
 
         if not run_recovery:
             for server_id in list(deployment.servers_updated):
@@ -766,6 +805,7 @@ class DeploymentEngine:
                     logger.info("  Rolled back server %s", server_id)
                 else:
                     logger.error("  Failed to rollback server %s", server_id)
+                    all_success = False
 
         self._record_event(
             DeploymentEventType.ROLLBACK_COMPLETE,
@@ -773,6 +813,7 @@ class DeploymentEngine:
                 "servers_rolled_back": rolled_back_ids,
             },
         )
+        return all_success and len(rolled_back_ids) == len(deployment.servers_updated)
 
     # ------------------------------------------------------------------
     # Initialisation helpers
