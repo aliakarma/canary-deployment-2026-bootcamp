@@ -275,8 +275,8 @@ Conducted systematic static code analysis, thread trace verification, and simula
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/aliakarma/bootcamp-2026-canary-deployment.git
-cd bootcamp-2026-canary-deployment
+git clone https://github.com/aliakarma/canary-deployment-2026-bootcamp.git
+cd canary-deployment-2026-bootcamp
 
 # Setup virtual environment
 python -m venv venv
@@ -339,7 +339,7 @@ flowchart TD
    - **Multi-Version Testing**: Runs the complete test suite (unit, integration, and concurrency stress tests) in parallel across Python `3.10`, `3.11`, and `3.12`.
    - **Environment Isolation**: Executes on clean `ubuntu-latest` environments with automated caching of `pip` dependencies.
    - **Coverage Tracking**: Runs tests using `pytest-cov`, exporting `coverage.xml` and an interactive `htmlcov/` dashboard as retention-safe pipeline artifacts.
-   - **Dynamic Coverage Reporting**: Uploads `coverage.xml` to [Codecov](https://codecov.io/gh/aliakarma/bootcamp-2026-canary-deployment) for live, per-commit coverage tracking with Python version matrix flag merging.
+   - **Dynamic Coverage Reporting**: Uploads `coverage.xml` to [Codecov](https://codecov.io/gh/aliakarma/canary-deployment-2026-bootcamp) for live, per-commit coverage tracking with Python version matrix flag merging.
    - **Test summaries**: Automatically parses JUnit XML results and coverage files to generate a Markdown summary table directly in the GitHub Actions Job Summary view.
 
 2. **Quality Assurance (`quality.yml`)**
