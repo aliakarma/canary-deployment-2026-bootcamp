@@ -29,7 +29,11 @@ if sys.platform == "win32":
 # Constants
 # ---------------------------------------------------------------------------
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_FILE = os.path.join(LOG_DIR, "canary_deployment.log")
+
+# Choose log filename dynamically to prevent file lock contention (WinError 32)
+# when running the dashboard and main simulator concurrently on Windows.
+is_dashboard = any("dashboard" in arg for arg in sys.argv)
+LOG_FILE = os.path.join(LOG_DIR, "dashboard.log" if is_dashboard else "canary_deployment.log")
 
 # Ensure the log directory exists
 os.makedirs(LOG_DIR, exist_ok=True)
