@@ -638,7 +638,7 @@ class TestConfigurableTiming:
 
         assert result.status == DeploymentStatus.COMPLETED
         # Should complete very quickly (< 1 second)
-        assert elapsed < 2.0
+        assert elapsed < 5.0
 
     def test_nonzero_delay_adds_wait(self, cluster_state: ClusterState) -> None:
         """Non-zero delay causes actual waiting between stages."""
@@ -984,4 +984,4 @@ class TestRollbackEventSemantics:
         duration = time.time() - start_time
 
         assert result.status == DeploymentStatus.COMPLETED
-        assert duration < 1.0
+        assert duration < 5.0

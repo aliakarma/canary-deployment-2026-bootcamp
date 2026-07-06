@@ -625,3 +625,12 @@ class SimulatorState:
                 self._audit_logger.close()
             self._init_subsystems()
             return {"status": "reset"}
+
+    def shutdown(self) -> None:
+        """Gracefully abort and join any running rollout thread."""
+        with self._lock:
+            if self._abort_event is not None:
+                self._abort_event.set()
+
+        if self._rollout_thread is not None and self._rollout_thread.is_alive():
+            self._rollout_thread.join(timeout=5.0)

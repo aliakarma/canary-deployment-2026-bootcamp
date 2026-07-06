@@ -24,7 +24,9 @@ from dashboard.state import SimulatorState
 @pytest.fixture()
 def sim_state() -> SimulatorState:
     """Fresh simulator state with a small deterministic cluster."""
-    return SimulatorState(cluster_size=10, seed=42)
+    state = SimulatorState(cluster_size=10, seed=42)
+    yield state
+    state.shutdown()
 
 
 @pytest.fixture()

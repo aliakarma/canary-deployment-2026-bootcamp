@@ -104,327 +104,36 @@ class DeploymentEngine:
     def deploy(self, config: DeploymentConfig) -> DeploymentState:  # noqa: C901
         """Execute a full canary deployment.
 
-        This method runs synchronously through all stages defined in
-        *config*.  Between stages it sleeps for
-        ``config.stage_delay_seconds`` (interruptible by
-        ``config.abort_event``).
-
-        Args:
-            config: A :class:`DeploymentConfig` describing the rollout
-                parameters.
-
-        Returns:
-            The final :class:`DeploymentState` after deployment
-            completes, rolls back, or is aborted.
+        This method runs a Temporal workflow in a local event loop.
         """
-        deployment = self._init_deployment(config)
-        self._current_deployment = deployment
+        import asyncio
+        from deploy.temporal_helper import run_temporal_deployment
         self._current_config = config
         self._last_event_id = None
         self._last_audit_logger = config.audit_logger
 
-        logger.info("=" * 60)
-        logger.info(
-            "DEPLOYMENT STARTED: %s -> %s  (ID: %s)",
-            deployment.source_version,
-            deployment.target_version,
-            deployment.deployment_id,
-        )
-        logger.info("  Config: %s", config)
-        logger.info("  Total servers: %d", deployment.total_servers)
-        logger.info("=" * 60)
-
-        self._record_event(
-            DeploymentEventType.DEPLOYMENT_START,
-            {
-                "target_version": config.target_version,
-                "source_version": deployment.source_version,
-                "total_servers": deployment.total_servers,
-                "stages": config.stages,
-            },
-        )
-
-        # Snapshot system initialization
-        snapshot_system = None
-        if config.audit_logger is not None:
-            from resilience.snapshots import ClusterSnapshotSystem
-
-            snapshot_system = ClusterSnapshotSystem(self._cluster)
-            snapshot = snapshot_system.create_snapshot(
-                deployment, metadata={"event": "deployment_init"}
-            )
-            self._record_event(
-                DeploymentEventType.SNAPSHOT_CREATE,
-                {
-                    "snapshot_id": snapshot.snapshot_id,
-                    "reason": "Initial deployment state snapshot",
-                    "servers_count": len(snapshot.servers),
-                },
-            )
-
-        # Checkpoint: evaluate_start
-        if config.governance_coordinator is not None:
-            decision = config.governance_coordinator.evaluate_start(
-                self._cluster,
-                deployment,
-                current_time=config.current_time,
-                audit_logger=config.audit_logger,
-            )
-            if decision == GovernanceDecision.BLOCK:
-                self._handle_governance_block(
-                    deployment, "Deployment blocked by governance start policy"
-                )
-                return deployment
-
-        deployment.status = DeploymentStatus.IN_PROGRESS
+        deployment = self._init_deployment(config)
+        self._current_deployment = deployment
 
         try:
-            for stage_idx, target_pct in enumerate(config.stages):
-                # ----------------------------------------------------------
-                # Check for abort before starting each stage
-                # ----------------------------------------------------------
-                if self._is_aborted(config):
-                    self._handle_abort(deployment, "Abort signal received before stage start")
-                    return deployment
-
-                # Checkpoint: evaluate_stage_start
-                if config.governance_coordinator is not None:
-                    decision = config.governance_coordinator.evaluate_stage_start(
-                        self._cluster,
-                        deployment,
-                        stage_idx,
-                        target_pct,
-                        current_time=config.current_time,
-                        audit_logger=config.audit_logger,
-                    )
-                    if decision == GovernanceDecision.BLOCK:
-                        self._handle_governance_block(
-                            deployment,
-                            f"Stage {stage_idx} blocked by stage-start policy",
-                        )
-                        return deployment
-
-                # ----------------------------------------------------------
-                # Execute stage
-                # ----------------------------------------------------------
-                if snapshot_system is not None:
-                    snapshot = snapshot_system.create_snapshot(
-                        deployment,
-                        metadata={"stage_index": stage_idx, "target_percentage": target_pct},
-                    )
-                    self._record_event(
-                        DeploymentEventType.SNAPSHOT_CREATE,
-                        {
-                            "snapshot_id": snapshot.snapshot_id,
-                            "reason": f"Pre-execution snapshot for Stage {stage_idx}",
-                            "servers_count": len(snapshot.servers),
-                        },
-                    )
-
-                stage_result = self._execute_stage(deployment, config, stage_idx, target_pct)
-                deployment.stages.append(stage_result)
-
-                self._record_event(
-                    DeploymentEventType.STAGE_TRANSITION,
-                    {
-                        "stage_index": stage_idx,
-                        "target_percentage": target_pct,
-                        "servers_updated": list(stage_result.servers_updated),
-                    },
-                )
-
-                if stage_result.error:
-                    # Stage failed — check if due to abort
-                    logger.error("Stage %d FAILED: %s", stage_idx, stage_result.error)
-                    if self._is_aborted(config):
-                        self._handle_abort(
-                            deployment,
-                            f"Abort signal received mid-stage: {stage_result.error}",
-                        )
-                    else:
-                        self._handle_rollback(
-                            deployment,
-                            f"Stage {stage_idx} failed: {stage_result.error}",
-                        )
-                    return deployment
-
-                # ----------------------------------------------------------
-                # Post-stage health check
-                # ----------------------------------------------------------
-                health_passed = self._run_health_check(config, stage_idx, target_pct)
-                stage_result.health_check_passed = health_passed
-
-                self._record_event(
-                    DeploymentEventType.HEALTH_CHECK,
-                    {
-                        "stage_index": stage_idx,
-                        "target_percentage": target_pct,
-                        "status": "pass" if health_passed else "fail",
-                        "retry_count": 0,
-                    },
-                )
-
-                if not health_passed:
-                    # Health check failed — handle retries
-                    retries_remaining = config.max_retries_per_stage
-                    retry_idx = 1
-                    while retries_remaining > 0 and not health_passed:
-                        logger.warning(
-                            "Health check FAILED for stage %d (%d%%). "
-                            "Retrying (%d retries left)...",
-                            stage_idx,
-                            target_pct,
-                            retries_remaining,
-                        )
-                        time.sleep(config.health_check_interval)
-                        health_passed = self._run_health_check(config, stage_idx, target_pct)
-
-                        self._record_event(
-                            DeploymentEventType.HEALTH_CHECK,
-                            {
-                                "stage_index": stage_idx,
-                                "target_percentage": target_pct,
-                                "status": "pass" if health_passed else "fail",
-                                "retry_count": retry_idx,
-                            },
-                        )
-                        retries_remaining -= 1
-                        retry_idx += 1
-
-                    if not health_passed:
-                        stage_result.health_check_passed = False
-                        logger.error(
-                            "Health check FAILED for stage %d (%d%%) "
-                            "after all retries. Initiating rollback.",
-                            stage_idx,
-                            target_pct,
-                        )
-                        if config.quarantine_system is not None:
-                            quarantined_regions = (
-                                config.quarantine_system.check_and_auto_quarantine(
-                                    threshold_percentage=30.0
-                                )
-                            )
-                            for region in quarantined_regions:
-                                self._record_event(
-                                    DeploymentEventType.QUARANTINE_ACTIVATE,
-                                    {
-                                        "region": region,
-                                        "reason": f"Auto-quarantining region {region} due to health check failures",
-                                    },
-                                )
-                        self._handle_rollback(
-                            deployment,
-                            f"Health check failed at stage {stage_idx} ({target_pct}%)",
-                        )
-                        return deployment
-
-                    stage_result.health_check_passed = True
-
-                # Checkpoint: evaluate_stage_complete
-                if config.governance_coordinator is not None:
-                    decision = config.governance_coordinator.evaluate_stage_complete(
-                        self._cluster,
-                        deployment,
-                        stage_idx,
-                        target_pct,
-                        current_time=config.current_time,
-                        audit_logger=config.audit_logger,
-                    )
-                    if decision == GovernanceDecision.BLOCK:
-                        self._handle_governance_block(
-                            deployment,
-                            f"Stage {stage_idx} blocked post-execution by governance",
-                        )
-                        return deployment
-                    elif decision == GovernanceDecision.ROLLBACK:
-                        self._handle_rollback(
-                            deployment,
-                            f"Governance policy mandated rollback at stage {stage_idx} ({target_pct}%)",
-                        )
-                        return deployment
-
-                # ----------------------------------------------------------
-                # Stage complete callback
-                # ----------------------------------------------------------
-                if config.on_stage_complete:
-                    try:
-                        config.on_stage_complete(
-                            stage_idx, target_pct, len(stage_result.servers_updated)
-                        )
-                    except Exception as exc:
-                        logger.warning("on_stage_complete callback raised: %s", exc)
-
-                logger.info(
-                    "Stage %d COMPLETE: %d%% deployed (%d/%d servers updated)",
-                    stage_idx,
-                    target_pct,
-                    len(deployment.servers_updated),
-                    deployment.total_servers,
-                )
-
-                # ----------------------------------------------------------
-                # Inter-stage delay (unless this is the final stage)
-                # ----------------------------------------------------------
-                if stage_idx < len(config.stages) - 1:
-                    deployment.status = DeploymentStatus.PAUSED
-                    if not self._wait_between_stages(config, deployment):
-                        # Aborted during wait
-                        self._handle_abort(
-                            deployment, "Abort signal received during inter-stage wait"
-                        )
-                        return deployment
-                    deployment.status = DeploymentStatus.IN_PROGRESS
-
-            # ----------------------------------------------------------
-            # All stages completed successfully
-            # ----------------------------------------------------------
-            deployment.mark_completed()
-            logger.info("=" * 60)
-            logger.info(
-                "DEPLOYMENT COMPLETED SUCCESSFULLY: %s -> %s",
-                deployment.source_version,
-                deployment.target_version,
-            )
-            logger.info(
-                "  Duration: %.1fs | Servers updated: %d/%d",
-                deployment.duration_seconds,
-                len(deployment.servers_updated),
-                deployment.total_servers,
-            )
-            logger.info("=" * 60)
-
-            self._record_event(
-                DeploymentEventType.DEPLOYMENT_COMPLETED,
-                {
-                    "target_version": deployment.target_version,
-                    "duration_seconds": deployment.duration_seconds,
-                    "servers_updated": list(deployment.servers_updated),
-                },
-            )
-
-            # Mark all updated servers as HEALTHY
-            for server_id in deployment.servers_updated:
-                self._cluster.update_server_status(server_id, ServerStatus.HEALTHY)
-
-        except GovernanceViolationError as exc:
-            logger.error("Governance violation during deployment: %s", exc)
-            deployment.mark_failed(str(exc))
-            self._record_event(
-                DeploymentEventType.POLICY_VIOLATION,
-                {"reason": str(exc), "stage_index": deployment.current_stage_index},
-            )
+            asyncio.run(run_temporal_deployment(self._cluster, config, deployment, self))
+            return deployment
         except Exception as exc:
-            logger.exception("Unexpected error during deployment: %s", exc)
-            deployment.mark_failed(f"Unexpected error: {exc}")
-            self._record_event(
-                DeploymentEventType.DEPLOYMENT_FAILED,
-                {"error": str(exc), "stage_index": deployment.current_stage_index},
+            logger.exception("Unexpected error during Temporal deployment: %s", exc)
+            summary = self._cluster.get_deployment_summary()
+            versions = summary["versions"]
+            source_version = max(versions, key=lambda v: versions[v])
+            deployment = DeploymentState(
+                deployment_id="error",
+                target_version=config.target_version,
+                source_version=source_version,
+                total_servers=self._cluster.size,
             )
+            deployment.mark_failed(f"Unexpected error: {exc}")
+            self._current_deployment = deployment
+            return deployment
         finally:
             self._current_config = None
-
-        return deployment
 
     # ------------------------------------------------------------------
     # Stage execution
