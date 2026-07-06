@@ -81,7 +81,7 @@ stateDiagram-v2
 │       (GovernanceCoordinator)             │ │  analyzer.py    │ │     (ClusterState)      │
 ├───────────────────────────────────────────┤ │  (Health checks)│ ├─────────────────────────┤
 │  • policies.py (Rule checks)              │ └─────────────────┘ │  • models.py            │
-│  • approvals.py (Approval Gates)           │                     │    (Servers & metadata) │
+│  • approvals.py (Approval Gates)          │                     │    (Servers & metadata) │
 │  • risk.py (Risk Scoring Engine)          │                     └─────────────────────────┘
 └─────────────────────┬─────────────────────┘
                       ▼
@@ -294,6 +294,17 @@ To run the full suite of staged rollouts, console aborts, failure injections, dr
 ```bash
 python main.py
 ```
+
+### Running the Dashboard
+To start the FastAPI and modern vanilla JS UI dashboard:
+```bash
+# Using Python module (Default)
+python -m dashboard.app
+
+# Or using uvicorn directly
+uvicorn dashboard.app:app --host 127.0.0.1 --port 8001 --reload
+```
+Once started, open `http://127.0.0.1:8001` in your web browser.
 
 ### Running the Tests
 To run the 168 automated unit, integration, and stress tests:
