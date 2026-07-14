@@ -15,3 +15,11 @@ ignore = ["E501", "C901"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
+
+[tool.coverage.run]
+omit = [
+    "dashboard/templates/*",
+    "venv/*",
+    ".venv/*",
+    "tests/*",
+]
