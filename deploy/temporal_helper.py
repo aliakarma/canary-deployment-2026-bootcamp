@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from temporalio.client import Client
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -14,8 +13,68 @@ from deploy.config import DeploymentConfig
 from deploy.state import DeploymentState, DeploymentStatus, StageResult
 from deploy.workflows import CanaryDeploymentWorkflow
 
-
 _cached_env: WorkflowEnvironment | None = None
+
+
+def _reconstruct_stage_result(st: Dict[str, Any]) -> StageResult:
+    """Helper to deserialize a StageResult dictionary."""
+    return StageResult(
+        stage_index=st["stage_index"],
+        target_percentage=st["target_percentage"],
+        servers_updated=st.get("servers_updated", []),
+        servers_total=st.get("servers_total", 0),
+        health_check_passed=st.get("health_check_passed"),
+        started_at=(
+            datetime.fromisoformat(st["started_at"]) if st.get("started_at") else datetime.now()
+        ),
+        completed_at=(
+            datetime.fromisoformat(st["completed_at"]) if st.get("completed_at") else None
+        ),
+        duration_seconds=st.get("duration_seconds", 0.0),
+        error=st.get("error"),
+    )
+
+
+async def _poll_workflow_state(handle: Any, deployment: DeploymentState) -> None:
+    """Periodically query workflow state and update the deployment object."""
+    try:
+        while True:
+            await asyncio.sleep(0.1)
+            try:
+                wf_state = await handle.query(CanaryDeploymentWorkflow.get_state)
+                if wf_state:
+                    deployment.deployment_id = wf_state["deployment_id"]
+                    deployment.status = DeploymentStatus(wf_state["status"])
+                    deployment.servers_updated = set(wf_state["servers_updated"])
+                    deployment.servers_pending = set(wf_state["servers_pending"])
+                    deployment.current_stage_index = wf_state["current_stage_index"]
+                    deployment.error_message = wf_state["error_message"]
+
+                    # Reconstruct stages
+                    deployment.stages.clear()
+                    for st in wf_state["stages"]:
+                        deployment.stages.append(_reconstruct_stage_result(st))
+
+                    if wf_state.get("started_at"):
+                        deployment.started_at = datetime.fromisoformat(wf_state["started_at"])
+                    if wf_state.get("completed_at"):
+                        deployment.completed_at = datetime.fromisoformat(wf_state["completed_at"])
+            except Exception:
+                pass
+    except asyncio.CancelledError:
+        pass
+
+
+async def _watch_abort_event(abort_event: asyncio.Event, handle: Any) -> None:
+    """Watch for abort event and signal workflow if it is set."""
+    try:
+        while True:
+            if abort_event.is_set():
+                await handle.signal(CanaryDeploymentWorkflow.abort, "Abort listener trigger")
+                break
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        pass
 
 
 async def run_temporal_deployment(
@@ -95,77 +154,13 @@ async def run_temporal_deployment(
         # Polling task for in-place updates (for dashboard real-time updates)
         poll_task = None
         if deployment is not None:
-
-            async def poll_state():
-                try:
-                    while True:
-                        await asyncio.sleep(0.1)
-                        try:
-                            wf_state = await handle.query(CanaryDeploymentWorkflow.get_state)
-                            if wf_state:
-                                deployment.deployment_id = wf_state["deployment_id"]
-                                deployment.status = DeploymentStatus(wf_state["status"])
-                                deployment.servers_updated = set(wf_state["servers_updated"])
-                                deployment.servers_pending = set(wf_state["servers_pending"])
-                                deployment.current_stage_index = wf_state["current_stage_index"]
-                                deployment.error_message = wf_state["error_message"]
-
-                                # Reconstruct stages
-                                deployment.stages.clear()
-                                for st in wf_state["stages"]:
-                                    sr = StageResult(
-                                        stage_index=st["stage_index"],
-                                        target_percentage=st["target_percentage"],
-                                        servers_updated=st["servers_updated"],
-                                        servers_total=st["servers_total"],
-                                        health_check_passed=st["health_check_passed"],
-                                        started_at=(
-                                            datetime.fromisoformat(st["started_at"])
-                                            if st.get("started_at")
-                                            else datetime.now()
-                                        ),
-                                        completed_at=(
-                                            datetime.fromisoformat(st["completed_at"])
-                                            if st.get("completed_at")
-                                            else None
-                                        ),
-                                        duration_seconds=st["duration_seconds"],
-                                        error=st["error"],
-                                    )
-                                    deployment.stages.append(sr)
-
-                                if wf_state.get("started_at"):
-                                    deployment.started_at = datetime.fromisoformat(
-                                        wf_state["started_at"]
-                                    )
-                                if wf_state.get("completed_at"):
-                                    deployment.completed_at = datetime.fromisoformat(
-                                        wf_state["completed_at"]
-                                    )
-                        except Exception:
-                            pass
-                except asyncio.CancelledError:
-                    pass
-
-            poll_task = asyncio.create_task(poll_state())
+            poll_task = asyncio.create_task(_poll_workflow_state(handle, deployment))
 
         # Monitor abort events in background
         abort_task = None
-        if config.abort_event is not None:
-
-            async def watch_abort():
-                try:
-                    while True:
-                        if config.abort_event.is_set():
-                            await handle.signal(
-                                CanaryDeploymentWorkflow.abort, "Abort listener trigger"
-                            )
-                            break
-                        await asyncio.sleep(0.1)
-                except asyncio.CancelledError:
-                    pass
-
-            abort_task = asyncio.create_task(watch_abort())
+        abort_event = config.abort_event
+        if abort_event is not None:
+            abort_task = asyncio.create_task(_watch_abort_event(abort_event, handle))
 
         # Wait for outcome
         try:
@@ -186,26 +181,7 @@ async def run_temporal_deployment(
 
             deployment.stages.clear()
             for st in workflow_result["stages"]:
-                sr = StageResult(
-                    stage_index=st["stage_index"],
-                    target_percentage=st["target_percentage"],
-                    servers_updated=st["servers_updated"],
-                    servers_total=st["servers_total"],
-                    health_check_passed=st["health_check_passed"],
-                    started_at=(
-                        datetime.fromisoformat(st["started_at"])
-                        if st.get("started_at")
-                        else datetime.now()
-                    ),
-                    completed_at=(
-                        datetime.fromisoformat(st["completed_at"])
-                        if st.get("completed_at")
-                        else None
-                    ),
-                    duration_seconds=st["duration_seconds"],
-                    error=st["error"],
-                )
-                deployment.stages.append(sr)
+                deployment.stages.append(_reconstruct_stage_result(st))
 
             if workflow_result.get("started_at"):
                 deployment.started_at = datetime.fromisoformat(workflow_result["started_at"])
@@ -223,26 +199,10 @@ async def run_temporal_deployment(
             servers_updated=set(workflow_result["servers_updated"]),
         )
         result_state.status = DeploymentStatus(workflow_result["status"])
-        result_state.progress_percentage = workflow_result["progress_percentage"]
         result_state.error_message = workflow_result["error_message"]
 
         for st in workflow_result["stages"]:
-            sr = StageResult(
-                stage_index=st["stage_index"],
-                target_percentage=st["target_percentage"],
-                servers_total=st["servers_total"],
-                started_at=(
-                    datetime.fromisoformat(st["started_at"]) if st.get("started_at") else None
-                ),
-            )
-            sr.completed_at = (
-                datetime.fromisoformat(st["completed_at"]) if st.get("completed_at") else None
-            )
-            sr.duration_seconds = st["duration_seconds"]
-            sr.health_check_passed = st["health_check_passed"]
-            sr.error = st["error"]
-            sr.servers_updated = st["servers_updated"]
-            result_state.stages.append(sr)
+            result_state.stages.append(_reconstruct_stage_result(st))
 
         if workflow_result.get("started_at"):
             result_state.started_at = datetime.fromisoformat(workflow_result["started_at"])

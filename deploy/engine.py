@@ -28,11 +28,10 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from cluster.models import ServerStatus
 from cluster.state import ClusterState
 from deploy.audit import DeploymentEvent, DeploymentEventType
 from deploy.config import DeploymentConfig
-from deploy.state import DeploymentState, DeploymentStatus, StageResult
+from deploy.state import DeploymentState, StageResult
 from governance import GovernanceDecision
 from logging_config import get_logger
 
@@ -107,7 +106,9 @@ class DeploymentEngine:
         This method runs a Temporal workflow in a local event loop.
         """
         import asyncio
+
         from deploy.temporal_helper import run_temporal_deployment
+
         self._current_config = config
         self._last_event_id = None
         self._last_audit_logger = config.audit_logger

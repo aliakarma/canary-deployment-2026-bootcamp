@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 from temporalio import activity
 
 from cluster.models import ServerStatus
 from cluster.state import ClusterState
 from deploy.audit import DeploymentEvent, DeploymentEventType
-from deploy.state import DeploymentState, DeploymentStatus, StageResult
-from governance import GovernanceDecision
+from deploy.state import DeploymentState, DeploymentStatus
 
 
 class CanaryDeploymentActivities:
@@ -93,7 +92,7 @@ class CanaryDeploymentActivities:
         decision = self.governance_coordinator.evaluate_start(
             self.cluster, ds, current_time=current_time, audit_logger=self.audit_logger
         )
-        return decision.name
+        return str(decision.name)
 
     @activity.defn
     async def evaluate_stage_start(self, args: Dict[str, Any]) -> str:
@@ -126,7 +125,7 @@ class CanaryDeploymentActivities:
             current_time=current_time,
             audit_logger=self.audit_logger,
         )
-        return decision.name
+        return str(decision.name)
 
     @activity.defn
     async def create_snapshot(self, args: Dict[str, Any]) -> str:
@@ -168,6 +167,7 @@ class CanaryDeploymentActivities:
                     deployment_id, target_version, source_version, total_servers, updated_ids
                 )
                 from deploy.config import DeploymentConfig
+
                 config = getattr(self.engine, "_current_config", None)
                 if config is None:
                     config = DeploymentConfig(
@@ -260,13 +260,16 @@ class CanaryDeploymentActivities:
         """Run health check callback."""
         if self.engine is not None:
             from deploy.config import DeploymentConfig
+
             config = getattr(self.engine, "_current_config", None)
             if config is None:
                 config = DeploymentConfig(
                     target_version="2.0.0",
                     health_check_fn=self.health_check_fn,
                 )
-            return self.engine._run_health_check(config, args["stage_idx"], args["target_pct"])
+            return bool(
+                self.engine._run_health_check(config, args["stage_idx"], args["target_pct"])
+            )
 
         if self.health_check_fn is None:
             return True
@@ -314,7 +317,7 @@ class CanaryDeploymentActivities:
             current_time=current_time,
             audit_logger=self.audit_logger,
         )
-        return decision.name
+        return str(decision.name)
 
     @activity.defn
     async def on_stage_complete_callback(self, args: Dict[str, Any]) -> None:
@@ -346,13 +349,18 @@ class CanaryDeploymentActivities:
         )
 
         ds = self._reconstruct_temp_deployment_state(
-            deployment_id, target_version, source_version, total_servers, updated_ids, "rolling_back"
+            deployment_id,
+            target_version,
+            source_version,
+            total_servers,
+            updated_ids,
+            "rolling_back",
         )
 
         decision = self.governance_coordinator.evaluate_rollback(
             self.cluster, ds, current_time=current_time, audit_logger=self.audit_logger
         )
-        return decision.name
+        return str(decision.name)
 
     @activity.defn
     async def rollback_updated_servers(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -365,7 +373,12 @@ class CanaryDeploymentActivities:
         error_message = args.get("error_message")
 
         ds = self._reconstruct_temp_deployment_state(
-            deployment_id, target_version, source_version, total_servers, updated_ids, "rolling_back"
+            deployment_id,
+            target_version,
+            source_version,
+            total_servers,
+            updated_ids,
+            "rolling_back",
         )
         ds.error_message = error_message
 
@@ -375,6 +388,7 @@ class CanaryDeploymentActivities:
 
         if self.quarantine_system is not None:
             from resilience.recovery import RecoveryPlanningEngine
+
             recovery_engine = RecoveryPlanningEngine(self.cluster, self.quarantine_system)
             quarantined = self.quarantine_system.get_quarantined_regions()
             strategy = "region_quarantine" if quarantined else "staged_recovery"

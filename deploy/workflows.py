@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from temporalio import workflow
 
@@ -16,7 +16,7 @@ class CanaryDeploymentWorkflow:
 
     def __init__(self) -> None:
         self.aborted = False
-        self.approval_decision = None
+        self.approval_decision: str | None = None
         self.state: Dict[str, Any] = {}
 
     @workflow.signal
@@ -34,7 +34,7 @@ class CanaryDeploymentWorkflow:
         return self.state
 
     @workflow.run
-    async def run_deployment(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_deployment(self, config: Dict[str, Any]) -> Dict[str, Any]:  # noqa: C901
         target_version = config["target_version"]
         stages = config["stages"]
         stage_delay_seconds = config["stage_delay_seconds"]
@@ -158,9 +158,7 @@ class CanaryDeploymentWorkflow:
                 )
                 if decision == "BLOCK":
                     self.state["status"] = "failed"
-                    self.state["error_message"] = (
-                        f"Stage {stage_idx} blocked by stage-start policy"
-                    )
+                    self.state["error_message"] = f"Stage {stage_idx} blocked by stage-start policy"
                     await record_event(
                         DeploymentEventType.POLICY_VIOLATION,
                         {"reason": self.state["error_message"], "stage_index": stage_idx},
@@ -365,6 +363,7 @@ class CanaryDeploymentWorkflow:
                 if stage_idx < len(stages) - 1:
                     self.state["status"] = "paused"
                     import asyncio
+
                     try:
                         await workflow.wait_condition(
                             lambda: self.aborted, timeout=timedelta(seconds=stage_delay_seconds)
@@ -427,7 +426,10 @@ class CanaryDeploymentWorkflow:
                 is_recoverable = (
                     err_msg.startswith("Health check failed")
                     or err_msg.startswith("Governance policy mandated")
-                    or (err_msg.startswith("Stage ") and ("Failed to update" in err_msg or "Under-provisioned" in err_msg))
+                    or (
+                        err_msg.startswith("Stage ")
+                        and ("Failed to update" in err_msg or "Under-provisioned" in err_msg)
+                    )
                 )
 
                 if is_recoverable:
@@ -446,7 +448,9 @@ class CanaryDeploymentWorkflow:
                     )
                     if rollback_decision == "BLOCK":
                         self.state["status"] = "failed"
-                        self.state["error_message"] = "Automatic rollback blocked by governance policy."
+                        self.state["error_message"] = (
+                            "Automatic rollback blocked by governance policy."
+                        )
                         await record_event(
                             DeploymentEventType.POLICY_VIOLATION,
                             {
