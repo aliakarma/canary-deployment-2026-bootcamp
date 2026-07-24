@@ -69,8 +69,11 @@ class TestGovernanceEngine:
         score, category = engine.calculate_risk(cluster_state, dep_state)
         # degraded * 15 (15) + failed * 30 * 2 (60) = 75
         assert score >= 75.0
-        # If we also deploy to us-east-1 critical region (say server 0 is us-east-1 and in updated)
-        dep_state.servers_updated.add(cluster_state.servers[0].id)
+        # Find a server in a critical region dynamically to prevent flakiness
+        critical_server = [s for s in cluster_state.servers if s.region in engine.critical_regions][
+            0
+        ]
+        dep_state.servers_updated.add(critical_server.id)
         score, category = engine.calculate_risk(cluster_state, dep_state)
         assert score > 75.0
         assert category == RiskScore.CRITICAL
@@ -140,7 +143,7 @@ class TestGovernanceEngine:
         assert res1.passed is True
 
         # Degraded us-east-1 server violates health policy
-        us_east_server.status = ServerStatus.DEGRADED
+        cluster_state.update_server_status(us_east_server.id, ServerStatus.DEGRADED)
         res2 = policy.evaluate(cluster_state, dep_state, {})
         assert res2.passed is False
         assert res2.decision == GovernanceDecision.ROLLBACK
@@ -211,8 +214,8 @@ class TestGovernanceEngine:
         """Verify rollout blocks when manual stage approval is denied."""
         audit = AuditLogger()
 
-        # ApprovalGate that denies all requests
-        gate = ApprovalGate(callback=lambda r: False)
+        # ApprovalGate that denies all requests, with threshold pinned to LOW to ensure callback is invoked
+        gate = ApprovalGate(callback=lambda r: False, auto_approve_below_risk="LOW")
         # ApprovalPolicy enforces gate at 75% progress
         coordinator = GovernanceCoordinator(approval_gate=gate)
 

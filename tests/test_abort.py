@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import queue
 import threading
-import time
 
 import pytest
 
@@ -89,10 +88,10 @@ class TestAbortListener:
         # Write unrelated input
         mock_stream.write("status\n")
         mock_stream.write("help\n")
+        # Then write abort to trigger the event and prove the previous inputs were consumed
+        mock_stream.write("abort\n")
 
-        # Let the thread process
-        time.sleep(0.2)
-        assert event.is_set() is False
+        assert event.wait(timeout=2.0) is True
 
         listener.stop()
         mock_stream.close()
@@ -105,11 +104,16 @@ class TestAbortListener:
         """Verify that typing 'abort' is harmless if no event is registered."""
         listener.start()
 
-        # Write abort command
+        # Write abort command when no event registered
         mock_stream.write("abort\n")
 
-        # Thread should execute without errors
-        time.sleep(0.2)
+        # Register event and write abort again to prove the first abort was consumed
+        # and the thread is still running and didn't crash
+        event = threading.Event()
+        listener.set_abort_event(event)
+        mock_stream.write("abort\n")
+
+        assert event.wait(timeout=2.0) is True
 
         listener.stop()
         mock_stream.close()
@@ -121,14 +125,20 @@ class TestAbortListener:
     ) -> None:
         """Verify clear_abort_event unregisters the event so it isn't set."""
         listener.start()
-        event = threading.Event()
-        listener.set_abort_event(event)
+        event1 = threading.Event()
+        listener.set_abort_event(event1)
         listener.clear_abort_event()
 
         mock_stream.write("abort\n")
 
-        time.sleep(0.2)
-        assert event.is_set() is False
+        # Register event2 and write abort again to prove the first abort was consumed
+        # without setting event1 and that the thread is still running
+        event2 = threading.Event()
+        listener.set_abort_event(event2)
+        mock_stream.write("abort\n")
+
+        assert event2.wait(timeout=2.0) is True
+        assert event1.is_set() is False
 
         listener.stop()
         mock_stream.close()

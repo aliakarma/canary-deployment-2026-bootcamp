@@ -134,7 +134,8 @@ class TestRollbackSystem:
         """Validation detects if a server runs a version other than the target version."""
         server_id = list(completed_deployment.servers_updated)[0]
         # Simulate drift by reverting that node to v1.0.0 manually
-        cluster_state.get_server(server_id).current_version = "1.0.0"  # type: ignore[union-attr]
+        with cluster_state._lock:
+            cluster_state._servers[server_id].current_version = "1.0.0"
 
         errors = validate_rollback_consistency(cluster_state, completed_deployment)
         assert server_id in errors
@@ -167,7 +168,8 @@ class TestRollbackSystem:
         """Rollback raises RollbackConsistencyError if drift is detected."""
         server_id = list(completed_deployment.servers_updated)[0]
         # Introduce manual drift
-        cluster_state.get_server(server_id).current_version = "3.0.0"  # type: ignore[union-attr]
+        with cluster_state._lock:
+            cluster_state._servers[server_id].current_version = "3.0.0"
 
         with pytest.raises(RollbackConsistencyError) as exc_info:
             rollback(cluster_state, completed_deployment)
@@ -186,7 +188,8 @@ class TestRollbackSystem:
         server_id_missing = list(completed_deployment.servers_updated)[1]
 
         # drift
-        cluster_state.get_server(server_id_drift).current_version = "3.0.0"  # type: ignore[union-attr]
+        with cluster_state._lock:
+            cluster_state._servers[server_id_drift].current_version = "3.0.0"
         # missing
         with cluster_state._lock:
             del cluster_state._servers[server_id_missing]

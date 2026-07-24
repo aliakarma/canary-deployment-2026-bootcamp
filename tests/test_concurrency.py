@@ -48,7 +48,8 @@ class TestConcurrencyStress:
             t.start()
 
         for t in threads:
-            t.join()
+            t.join(timeout=5.0)
+            assert not t.is_alive()
 
         all_events = logger.get_events()
         assert len(all_events) == num_threads * events_per_thread
@@ -84,7 +85,8 @@ class TestConcurrencyStress:
             t.start()
 
         for t in threads:
-            t.join()
+            t.join(timeout=5.0)
+            assert not t.is_alive()
 
         # Should complete without crashing (no deadlocks or unhandled concurrency failures)
         assert len(errors) == 0
@@ -127,9 +129,11 @@ class TestConcurrencyStress:
         t_spam = threading.Thread(target=spam_abort)
         t_spam.start()
 
-        t_spam.join()
+        t_spam.join(timeout=5.0)
+        assert not t_spam.is_alive()
         abort_event.set()  # Make sure it's fully aborted
-        t_deploy.join()
+        t_deploy.join(timeout=5.0)
+        assert not t_deploy.is_alive()
 
         # Deployment should gracefully enter aborted/failed state
         res = engine.current_deployment
@@ -177,7 +181,8 @@ class TestConcurrencyStress:
                 time.sleep(0.005)
         finally:
             stop_threads.set()
-            t_mutator.join()
+            t_mutator.join(timeout=5.0)
+            assert not t_mutator.is_alive()
 
 
 class TestConcurrencyOrderingGuarantees:
@@ -215,7 +220,8 @@ class TestConcurrencyOrderingGuarantees:
                 t.start()
 
             for t in threads:
-                t.join()
+                t.join(timeout=5.0)
+                assert not t.is_alive()
 
             # Verify total counts
             memory_events = logger.get_events()
@@ -276,7 +282,8 @@ class TestConcurrencyOrderingGuarantees:
                 t.start()
 
             for t in threads:
-                t.join()
+                t.join(timeout=5.0)
+                assert not t.is_alive()
 
             # Verify total events
             memory_events = logger.get_events()
@@ -350,7 +357,8 @@ class TestConcurrencyOrderingGuarantees:
                 t.start()
 
             for t in threads:
-                t.join()
+                t.join(timeout=5.0)
+                assert not t.is_alive()
 
             # Load and replay from file
             replay = EventReplayEngine()

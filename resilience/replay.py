@@ -139,17 +139,22 @@ class EventReplayEngine:
             if parent_id and parent_id == event_id:
                 errors.append(f"Causality corruption: Event {event_id} is its own parent.")
 
-        # Reconstruct path traversal to detect cycles. An explicit stack is
-        # used instead of recursion so that very long or malformed audit
-        # trails cannot exhaust Python's recursion limit.
+        # Reconstruct path traversal to detect cycles for ALL nodes, not just ROOT,
+        # to ensure loops disconnected from ROOT are also detected.
         graph = self.build_causality_graph(events)
+        all_nodes = set(graph.keys())
+        for children_list in graph.values():
+            all_nodes.update(children_list)
+        if "ROOT" in all_nodes:
+            all_nodes.discard("ROOT")
+
         visited: Set[str] = set()
 
-        for root in graph.get("ROOT", []):
-            # Each frame on the stack is (node, on_path) where on_path marks
-            # the post-visit "pop" that clears the node from the active path.
+        for start_node in sorted(all_nodes):
+            if start_node in visited:
+                continue
             path: Set[str] = set()
-            stack: List[Tuple[str, bool]] = [(root, False)]
+            stack: List[Tuple[str, bool]] = [(start_node, False)]
             while stack:
                 node, finishing = stack.pop()
                 if finishing:
@@ -167,6 +172,53 @@ class EventReplayEngine:
                     stack.append((child, False))
 
         return (len(errors) == 0, errors)
+
+    def _update_virtual_state(
+        self,
+        evt_type: str,
+        details: Dict[str, Any],
+        virtual_servers: Dict[str, Dict[str, Any]],
+        target_version: str | None,
+        source_version: str | None,
+        deployment_status: str,
+    ) -> Tuple[str, str | None, str | None]:
+        """Apply a single event transition to the virtual state."""
+        if evt_type == "deployment_start":
+            target_version = details.get("target_version")
+            source_version = details.get("source_version")
+            deployment_status = "in_progress"
+
+        elif evt_type == "stage_transition":
+            servers_updated = details.get("servers_updated", [])
+            for s_id in servers_updated:
+                virtual_servers[s_id] = {"version": target_version, "status": "healthy"}
+
+        elif evt_type == "health_check":
+            # If health check failed in details, update virtual server status
+            if details.get("status") == "fail":
+                # Mark updated servers as degraded for simulated failures
+                for s_id, s_data in virtual_servers.items():
+                    if s_data["version"] == target_version:
+                        s_data["status"] = "degraded"
+
+        elif evt_type == "rollback_complete":
+            # Rollback reverted servers
+            servers_reverted = details.get("servers_rolled_back", [])
+            for s_id in servers_reverted:
+                if s_id in virtual_servers:
+                    virtual_servers[s_id] = {"version": source_version, "status": "healthy"}
+            deployment_status = "rolled_back"
+
+        elif evt_type == "deployment_completed":
+            deployment_status = "completed"
+
+        elif evt_type == "rollback_initiated":
+            deployment_status = "rolling_back"
+
+        elif evt_type == "deployment_failed":
+            deployment_status = "failed"
+
+        return deployment_status, target_version, source_version
 
     def reconstruct_state_at_step(
         self,
@@ -193,47 +245,26 @@ class EventReplayEngine:
         target_version = None
         source_version = None
 
+        found = False
         for ev in timeline:
-            evt_type = ev.get("event_type")
+            evt_type = ev.get("event_type", "")
             details = ev.get("details", {})
 
-            if evt_type == "deployment_start":
-                target_version = details.get("target_version")
-                source_version = details.get("source_version")
-                deployment_status = "in_progress"
-
-            elif evt_type == "stage_transition":
-                servers_updated = details.get("servers_updated", [])
-                for s_id in servers_updated:
-                    virtual_servers[s_id] = {"version": target_version, "status": "healthy"}
-
-            elif evt_type == "health_check":
-                # If health check failed in details, update virtual server status
-                if details.get("status") == "fail":
-                    # Mark updated servers as degraded for simulated failures
-                    for s_id, s_data in virtual_servers.items():
-                        if s_data["version"] == target_version:
-                            s_data["status"] = "degraded"
-
-            elif evt_type == "rollback_complete":
-                # Rollback reverted servers
-                servers_reverted = details.get("servers_rolled_back", [])
-                for s_id in servers_reverted:
-                    if s_id in virtual_servers:
-                        virtual_servers[s_id] = {"version": source_version, "status": "healthy"}
-                deployment_status = "rolled_back"
-
-            elif evt_type == "deployment_completed":
-                deployment_status = "completed"
-
-            elif evt_type == "rollback_initiated":
-                deployment_status = "rolling_back"
-
-            elif evt_type == "deployment_failed":
-                deployment_status = "failed"
+            deployment_status, target_version, source_version = self._update_virtual_state(
+                evt_type,
+                details,
+                virtual_servers,
+                target_version,
+                source_version,
+                deployment_status,
+            )
 
             if ev.get("event_id") == step_event_id:
+                found = True
                 break
+
+        if not found:
+            raise ValueError(f"Requested step_event_id '{step_event_id}' not found in timeline.")
 
         return {
             "deployment_status": deployment_status,

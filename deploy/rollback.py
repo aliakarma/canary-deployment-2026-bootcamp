@@ -225,6 +225,7 @@ def rollback(
     deployment_state.mark_rolling_back()
     rolled_back_ids: list[str] = []
 
+    all_success = True
     try:
         # Revert each updated server
         for server_id in list(deployment_state.servers_updated):
@@ -232,6 +233,8 @@ def rollback(
             server = cluster_state.get_server(server_id)
             if server is None:
                 logger.warning("Force rollback: skipping missing server %s", server_id)
+                if not force:
+                    all_success = False
                 continue
 
             # Check if rollback can be executed
@@ -244,8 +247,10 @@ def rollback(
                 rolled_back_ids.append(server_id)
             else:
                 logger.error("Failed to rollback server %s in cluster state", server_id)
+                all_success = False
 
-        deployment_state.mark_rolled_back()
+        if all_success:
+            deployment_state.mark_rolled_back()
 
         if audit_logger is not None:
             audit_logger.log(

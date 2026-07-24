@@ -1,1 +1,6 @@
-# No runtime dependencies — standard-library-first project.
+# Runtime dependencies for the Canary Deployment Simulator dashboard
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+jinja2>=3.1.0
+temporalio>=1.5.0
+

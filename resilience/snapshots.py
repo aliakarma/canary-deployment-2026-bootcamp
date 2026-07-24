@@ -43,6 +43,8 @@ class ClusterSnapshotSystem:
             serialized_servers.append(
                 {
                     "id": server.id,
+                    "hostname": server.hostname,
+                    "ip_address": server.ip_address,
                     "region": server.region,
                     "status": server.status.value,
                     "current_version": server.current_version,
@@ -147,6 +149,12 @@ class ClusterSnapshotSystem:
                 # Build maps of existing servers
                 existing_servers = self.cluster._servers
 
+                # Reconcile membership: delete existing servers not in snapshot
+                snap_ids = {snap_s["id"] for snap_s in snapshot.servers}
+                for s_id in list(existing_servers.keys()):
+                    if s_id not in snap_ids:
+                        del existing_servers[s_id]
+
                 # Update attributes or re-create
                 for snap_s in snapshot.servers:
                     server_id = snap_s["id"]
@@ -155,8 +163,8 @@ class ClusterSnapshotSystem:
                         # Server was deleted in the meantime, recreate it
                         server = Server(
                             id=server_id,
-                            hostname=f"node-{snap_s['region']}-{server_id}.internal",
-                            ip_address=f"10.0.0.{len(existing_servers)}",
+                            hostname=snap_s["hostname"],
+                            ip_address=snap_s["ip_address"],
                             region=snap_s["region"],
                             current_version=snap_s["current_version"],
                             status=ServerStatus(snap_s["status"]),

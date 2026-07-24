@@ -44,7 +44,7 @@ class ApprovalGate:
             req_index = 3
             threshold_index = 2
 
-        if req_index < threshold_index and self._callback is None:
+        if req_index < threshold_index:
             request.status = ApprovalDecision.BYPASSED
             return ApprovalDecision.BYPASSED
 

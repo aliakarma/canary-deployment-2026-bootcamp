@@ -50,40 +50,51 @@ class ClusterState:
         """Return a snapshot list of all servers.
 
         .. note::
-            The returned list is a fresh copy, but the :class:`Server`
-            objects inside it are the live, shared instances.  Callers
-            must not mutate server fields directly; use the thread-safe
-            ``update_*`` / ``rollback_server`` / ``override_version``
-            methods instead, which acquire the internal lock.
+            The returned list and its Server objects are copies to prevent
+            direct mutation of shared state. Callers must mutate state only
+            through the thread-safe transition methods.
         """
         with self._lock:
-            return list(self._servers.values())
+            import copy
+
+            return [copy.deepcopy(s) for s in self._servers.values()]
 
     def get_server(self, server_id: str) -> Server | None:
         """Retrieve a server by its ID, or ``None`` if not found.
 
         .. note::
-            Returns the live, shared :class:`Server` instance. Treat it as
-            read-only — mutate state through the thread-safe ``update_*`` /
-            ``rollback_server`` / ``override_version`` methods.
+            Returns a copy of the Server instance to prevent direct mutation.
         """
         with self._lock:
-            return self._servers.get(server_id)
+            server = self._servers.get(server_id)
+            if server is None:
+                return None
+            import copy
+
+            return copy.deepcopy(server)
 
     def get_servers_by_status(self, status: ServerStatus) -> list[Server]:
         """Return all servers matching the given status."""
         with self._lock:
-            return [s for s in self._servers.values() if s.status == status]
+            import copy
+
+            return [copy.deepcopy(s) for s in self._servers.values() if s.status == status]
 
     def get_servers_by_version(self, version: str) -> list[Server]:
         """Return all servers running the given version."""
         with self._lock:
-            return [s for s in self._servers.values() if s.current_version == version]
+            import copy
+
+            return [
+                copy.deepcopy(s) for s in self._servers.values() if s.current_version == version
+            ]
 
     def get_servers_by_region(self, region: str) -> list[Server]:
         """Return all servers in the given region."""
         with self._lock:
-            return [s for s in self._servers.values() if s.region == region]
+            import copy
+
+            return [copy.deepcopy(s) for s in self._servers.values() if s.region == region]
 
     def get_deployment_summary(self) -> dict[str, Any]:
         """Return a summary of the current cluster state.
@@ -279,6 +290,7 @@ class ClusterState:
             if (
                 server.deployment_history
                 and server.deployment_history[-1].get("action") == "rollback"
+                and server.current_version == server.deployment_history[-1].get("version")
             ):
                 logger.debug("Server %s is already rolled back (idempotent no-op)", server_id)
                 return True

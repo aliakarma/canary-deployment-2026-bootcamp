@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canary Guard — Canary Deployment Simulator</title>
+    <!-- Google Fonts: Inter & JetBrains Mono for logs -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Bootstrap 5.3 Dark -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          crossorigin="anonymous">
+    <style>
+        :root {
+            --bg-base: #09090b; /* zinc-950 */
+            --bg-card: #18181b; /* zinc-900 */
+            --border-color: #27272a; /* zinc-800 */
+            --border-hover: #3f3f46; /* zinc-700 */
+
+            --text-primary: #f4f4f5; /* zinc-100 */
+            --text-secondary: #a1a1aa; /* zinc-400 */
+            --text-muted: #52525b; /* zinc-600 */
+
+            --status-healthy: #10b981; /* emerald-500 */
+            --status-degraded: #f59e0b; /* amber-500 */
+            --status-failed: #ef4444; /* red-500 */
+            --status-updating: #3b82f6; /* blue-500 */
+            --status-quarantine: #a855f7; /* purple-500 */
+
+            --neon-shadow-healthy: 0 0 10px rgba(16, 185, 129, 0.25);
+            --neon-shadow-degraded: 0 0 10px rgba(245, 158, 11, 0.25);
+            --neon-shadow-failed: 0 0 10px rgba(239, 68, 68, 0.25);
+            --neon-shadow-updating: 0 0 10px rgba(59, 130, 246, 0.25);
+            --neon-shadow-quarantine: 0 0 12px rgba(168, 85, 247, 0.3);
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            letter-spacing: -0.01em;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* Card Styling */
+        .premium-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px -2px rgba(0,0,0,0.5);
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
+        }
+        .premium-card:hover { border-color: var(--border-hover); }
+        .card-title-bar {
+            border-bottom: 1px solid var(--border-color);
+            padding: 14px 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .card-content-body { padding: 20px; }
+
+        /* Status Badge */
+        .status-pill {
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .status-pill::before {
+            content: "";
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background-color: currentColor;
+        }
+        .pill-healthy { background: rgba(16, 185, 129, 0.12); color: var(--status-healthy); }
+        .pill-degraded { background: rgba(245, 158, 11, 0.12); color: var(--status-degraded); }
+        .pill-failed { background: rgba(239, 68, 68, 0.12); color: var(--status-failed); }
+        .pill-updating { background: rgba(59, 130, 246, 0.12); color: var(--status-updating); }
+        .pill-quarantine { background: rgba(168, 85, 247, 0.12); color: var(--status-quarantine); animation: pulse-border 2s infinite; }
+
+        /* Server Node Grid */
+        .server-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(14px, 1fr));
+            gap: 5px;
+            margin: 12px 0;
+        }
+        .server-node {
+            aspect-ratio: 1;
+            border-radius: 3px;
+            background-color: var(--border-color);
+            transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.15s ease;
+            position: relative;
+        }
+        .server-node:hover { transform: scale(1.35) translateY(-2px); z-index: 10; }
+        .node-healthy { background-color: var(--status-healthy); }
+        .node-healthy:hover { box-shadow: var(--neon-shadow-healthy); }
+        .node-degraded { background-color: var(--status-degraded); }
+        .node-degraded:hover { box-shadow: var(--neon-shadow-degraded); }
+        .node-failed { background-color: var(--status-failed); }
+        .node-failed:hover { box-shadow: var(--neon-shadow-failed); }
+        .node-updating { background-color: var(--status-updating); animation: pulse-soft 1.4s infinite; }
+        .node-updating:hover { box-shadow: var(--neon-shadow-updating); }
+        .node-quarantined { background-color: var(--status-quarantine); }
+        .node-quarantined:hover { box-shadow: var(--neon-shadow-quarantine); }
+        @keyframes pulse-soft { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+        /* Progress Bars */
+        .premium-progress {
+            height: 22px;
+            background-color: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+        }
+        .premium-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4f46e5, #3b82f6);
+            transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: flex-end;
+            padding-right: 8px;
+            min-width: 2.4rem;
+        }
+
+        /* Region card */
+        .region-card-premium {
+            position: relative;
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            transition: all 0.25s ease;
+            height: 100%;
+        }
+        .region-card-premium.region-quarantined {
+            border-color: rgba(168, 85, 247, 0.4);
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(168, 85, 247, 0.05) 100%);
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.1);
+        }
+
+        /* Health score gauge ring */
+        .score-ring {
+            --val: 100;
+            --col: var(--status-healthy);
+            width: 86px; height: 86px; border-radius: 50%;
+            display: grid; place-items: center;
+            background: conic-gradient(var(--col) calc(var(--val) * 1%), rgba(255,255,255,0.06) 0);
+            transition: background 0.6s ease;
+        }
+        .score-ring-inner {
+            width: 68px; height: 68px; border-radius: 50%;
+            background: var(--bg-card);
+            display: grid; place-items: center; text-align: center;
+        }
+
+        /* Terminal Style Event Logs */
+        .terminal-log {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.76rem;
+            background-color: #0c0c0e;
+            border-radius: 8px;
+            height: 460px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+        }
+        .terminal-row {
+            padding: 6px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            border-left: 3px solid transparent;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            transition: background 0.15s ease;
+        }
+        .terminal-row:hover { background-color: rgba(255,255,255,0.03); }
+        .sev-critical { border-left-color: var(--status-failed); }
+        .sev-warning  { border-left-color: var(--status-degraded); }
+        .sev-success  { border-left-color: var(--status-healthy); }
+        .sev-info     { border-left-color: var(--border-hover); }
+        .terminal-ts { color: var(--text-muted); flex-shrink: 0; width: 66px; }
+        .terminal-body { flex-grow: 1; word-break: break-word; color: #d4d4d8; }
+        .terminal-badge {
+            font-size: 0.62rem;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-weight: 700;
+            flex-shrink: 0;
+            text-transform: uppercase;
+        }
+        .terminal-id {
+            color: var(--text-muted);
+            font-size: 0.68rem;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: color 0.15s ease;
+        }
+        .terminal-id:hover { color: var(--status-updating); text-decoration: underline; }
+        .bg-purple { background-color: var(--status-quarantine) !important; }
+
+        /* Buttons */
+        .btn-premium {
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.82rem;
+            padding: 8px 16px;
+            transition: all 0.2s ease;
+            letter-spacing: -0.01em;
+        }
+        .btn-premium-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; color: white; box-shadow: 0 2px 10px rgba(16, 185, 129, 0.2); }
+        .btn-premium-success:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35); color:white; }
+        .btn-premium-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border: none; color: white; box-shadow: 0 2px 10px rgba(245, 158, 11, 0.2); }
+        .btn-premium-warning:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(245, 158, 11, 0.35); color:white; }
+        .btn-premium-danger { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
+        .btn-premium-danger:hover { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.5); color: white; }
+        .btn-premium-purple { background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.35); color: #d8b4fe; }
+        .btn-premium-purple:hover { background: rgba(168, 85, 247, 0.2); color: white; }
+        .btn-premium-secondary { background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-color); color: var(--text-secondary); }
+        .btn-premium-secondary:hover { background: rgba(255, 255, 255, 0.08); color: var(--text-primary); }
+
+        /* Demo scenario buttons */
+        .scenario-btn {
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.0));
+            color: var(--text-primary);
+            padding: 12px 14px;
+            text-align: left;
+            transition: all 0.2s ease;
+            width: 100%;
+            display: flex; gap: 12px; align-items: center;
+        }
+        .scenario-btn:hover { border-color: var(--border-hover); transform: translateY(-2px); background: rgba(255,255,255,0.05); }
+        .scenario-ic { width: 34px; height: 34px; border-radius: 8px; display:grid; place-items:center; flex-shrink:0; }
+
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(168, 85, 247, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+        }
+        .pulse-active { position: relative; }
+        .pulse-active::after {
+            content: "";
+            position: absolute;
+            top: 12px; right: 14px;
+            width: 8px; height: 8px;
+            background-color: var(--status-updating);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--status-updating);
+            animation: pulse-dot 1.5s infinite;
+        }
+        @keyframes pulse-dot {
+            0% { transform: scale(0.9); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.5; }
+            100% { transform: scale(0.9); opacity: 1; }
+        }
+
+        .system-banner {
+            background-color: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+        .metric-tile { background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 6px; }
+        .gov-row { display:flex; justify-content:space-between; align-items:center; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.03); font-size: 0.8rem; }
+        .filter-chip { cursor:pointer; font-size:0.68rem; padding:2px 9px; border-radius:9999px; border:1px solid var(--border-color); color:var(--text-secondary); user-select:none; }
+        .filter-chip.active { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.4); color:#93c5fd; }
+        .toast-feedback { min-height: 1.2rem; }
+    </style>
+</head>
+<body>
+    <!-- Navbar Header -->
+    <nav class="navbar navbar-dark bg-dark border-bottom border-secondary py-3 mb-4">
+        <div class="container-fluid px-4">
+            <span class="navbar-brand d-flex align-items-center fs-5 fw-bold text-light">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" class="bi bi-shield-fill-check text-primary me-2" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0c-.69 0-1.843.268-2.9.76-1.07.5-1.967 1.142-2.585 1.802C1.907 3.211 1.5 4.162 1.5 5.25c0 4.103 2.378 7.375 5.928 9.385a.5.5 0 0 0 .144.053l.14.015.011-.002.012-.002a.5.5 0 0 0 .144-.053c3.55-2.01 5.928-5.282 5.928-9.385 0-1.088-.407-2.039-.985-2.688-.618-.66-1.514-1.302-2.585-1.802C9.843.268 8.69 0 8 0zm.854 5.146a.5.5 0 1 0-.708-.708L5.5 7.086 4.354 5.938a.5.5 0 1 0-.708.708l1.5 1.5a.5.5 0 0 0 .708 0l3-3z"/>
+                </svg>
+                Canary Guard
+                <span class="text-secondary small fw-normal ms-2 d-none d-sm-inline">| Canary Deployment Simulator</span>
+            </span>
+            <div class="d-flex align-items-center gap-3">
+                <div class="system-banner small d-none d-md-flex align-items-center gap-2">
+                    <span class="d-inline-block rounded-circle bg-success" style="width:6px; height:6px;"></span>
+                    Telemetry Pipeline Active
+                </div>
+                <span class="text-secondary small font-monospace" id="clockDisplay"></span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid px-4">
+
+        <!-- Demo Scenario Launcher -->
+        <div class="premium-card mb-4">
+            <div class="card-title-bar">
+                <span>Guided Demo Scenarios — One-Click Presentation Flow</span>
+                <span class="toast-feedback small font-monospace" id="scenarioFeedback"></span>
+            </div>
+            <div class="card-content-body">
+                <div class="row g-3">
+                    <div class="col-md-6 col-xl-3">
+                        <button class="scenario-btn" onclick="runScenario('successful_rollout', this)">
+                            <span class="scenario-ic" style="background:rgba(16,185,129,0.15); color:var(--status-healthy);">▶</span>
+                            <span><span class="fw-semibold d-block">Run Successful Rollout</span><span class="small text-secondary">Progressive 10→100% canary</span></span>
+                        </button>
+                    </div>
+                    <div class="col-md-6 col-xl-3">
+                        <button class="scenario-btn" onclick="runScenario('regional_failure', this)">
+                            <span class="scenario-ic" style="background:rgba(239,68,68,0.15); color:var(--status-failed);">✕</span>
+                            <span><span class="fw-semibold d-block">Simulate Regional Failure</span><span class="small text-secondary">Outage → auto-quarantine</span></span>
+                        </button>
+                    </div>
+                    <div class="col-md-6 col-xl-3">
+                        <button class="scenario-btn" onclick="runScenario('governance_block', this)">
+                            <span class="scenario-ic" style="background:rgba(245,158,11,0.15); color:var(--status-degraded);">⚖</span>
+                            <span><span class="fw-semibold d-block">Trigger Governance Block</span><span class="small text-secondary">Restricted change window</span></span>
+                        </button>
+                    </div>
+                    <div class="col-md-6 col-xl-3">
+                        <button class="scenario-btn" onclick="replayLatest(this)">
+                            <span class="scenario-ic" style="background:rgba(59,130,246,0.15); color:var(--status-updating);">⟲</span>
+                            <span><span class="fw-semibold d-block">Replay Historical Incident</span><span class="small text-secondary">Deterministic reconstruction</span></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 1: Metrics Panels -->
+        <div class="row g-4 mb-4">
+            <!-- Health Summary Panel -->
+            <div class="col-lg-4">
+                <div class="premium-card h-100">
+                    <div class="card-title-bar">
+                        <span>Health Metrics</span>
+                        <span class="status-pill pill-healthy" id="healthScorePill" style="font-size:0.65rem;">100 SCORE</span>
+                    </div>
+                    <div class="card-content-body" id="healthPanel">
+                        <div class="text-center py-4 text-secondary">Awaiting metrics pipeline...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rollout Progress Panel -->
+            <div class="col-lg-4">
+                <div class="premium-card h-100" id="rolloutCard">
+                    <div class="card-title-bar">
+                        <span>Canary Rollout Timeline</span>
+                        <span class="text-muted small" id="rolloutIdLabel"></span>
+                    </div>
+                    <div class="card-content-body" id="rolloutPanel">
+                        <div class="text-center py-4 text-secondary">Ready for deployment</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Governance and Risk Panel -->
+            <div class="col-lg-4">
+                <div class="premium-card h-100">
+                    <div class="card-title-bar">
+                        <span>Governance &amp; Risk</span>
+                        <span class="status-pill" id="windowPill" style="font-size:0.65rem;"></span>
+                    </div>
+                    <div class="card-content-body" id="governancePanel">
+                        <div class="text-center py-4 text-secondary">Calculating compliance vector...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2: Cluster Overview regions -->
+        <div class="row g-4 mb-4">
+            <div class="col-12">
+                <div class="premium-card">
+                    <div class="card-title-bar">
+                        <span>Live Cluster Map (Geographical Nodes)</span>
+                        <span class="text-muted small">
+                            <span class="me-3"><span style="color:var(--status-healthy)">●</span> healthy
+                            <span style="color:var(--status-updating)">●</span> updating
+                            <span style="color:var(--status-degraded)">●</span> degraded
+                            <span style="color:var(--status-failed)">●</span> failed
+                            <span style="color:var(--status-quarantine)">●</span> isolated</span>
+                            Total: <span id="nodeTotalLabel">0</span>
+                        </span>
+                    </div>
+                    <div class="card-content-body">
+                        <div class="row g-3" id="regionsPanel"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 3: Event stream & Operator centers -->
+        <div class="row g-4 mb-5">
+            <!-- Event logs -->
+            <div class="col-lg-7">
+                <div class="premium-card h-100">
+                    <div class="card-title-bar">
+                        <span>Real-Time Event Audit Stream</span>
+                        <span class="status-pill pill-updating" style="font-size:0.65rem;" id="eventCountBadge">0 EVENTS</span>
+                    </div>
+                    <div class="px-3 pt-3 pb-2 d-flex flex-wrap align-items-center gap-2 border-bottom" style="border-color:var(--border-color)!important;">
+                        <span class="filter-chip active" data-filter="all" onclick="setFilter('all', this)">All</span>
+                        <span class="filter-chip" data-filter="critical" onclick="setFilter('critical', this)">Critical</span>
+                        <span class="filter-chip" data-filter="rollout" onclick="setFilter('rollout', this)">Rollout</span>
+                        <span class="filter-chip" data-filter="governance" onclick="setFilter('governance', this)">Governance</span>
+                        <span class="filter-chip" data-filter="chaos" onclick="setFilter('chaos', this)">Chaos</span>
+                        <span class="filter-chip" data-filter="health" onclick="setFilter('health', this)">Health</span>
+                        <div class="form-check form-switch ms-auto mb-0">
+                            <input class="form-check-input" type="checkbox" id="autoScrollToggle" checked>
+                            <label class="form-check-label small text-secondary" for="autoScrollToggle">Auto-scroll</label>
+                        </div>
+                    </div>
+                    <div class="card-content-body p-0">
+                        <div class="terminal-log" id="eventLog"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Operators & Chaos Center -->
+            <div class="col-lg-5 d-flex flex-column gap-4">
+                <!-- Action Controls -->
+                <div class="premium-card">
+                    <div class="card-title-bar">Deployment Controller</div>
+                    <div class="card-content-body d-flex flex-wrap gap-2">
+                        <button class="btn btn-premium btn-premium-success flex-grow-1" onclick="startRollout()">
+                            Start Staged Canary
+                        </button>
+                        <button class="btn btn-premium btn-premium-warning flex-grow-1" onclick="triggerRollback()">
+                            Execute Rollback
+                        </button>
+                        <button class="btn btn-premium btn-premium-secondary" onclick="resetSimulator()">
+                            Reset Cluster
+                        </button>
+                        <div id="controlFeedback" class="w-100 mt-2 small font-monospace toast-feedback"></div>
+                    </div>
+                </div>
+
+                <!-- Chaos Injection Controls -->
+                <div class="premium-card">
+                    <div class="card-title-bar">Chaos Engineering Lab</div>
+                    <div class="card-content-body">
+                        <div class="d-flex flex-wrap gap-2">
+                            <button class="btn btn-premium btn-premium-danger flex-grow-1" onclick="injectChaos('degrade', 0.3)">
+                                Degrade Nodes (30%)
+                            </button>
+                            <button class="btn btn-premium btn-premium-danger flex-grow-1" onclick="injectChaos('fail', 0.2)">
+                                Fail Nodes (20%)
+                            </button>
+                            <button class="btn btn-premium btn-premium-danger flex-grow-1" onclick="injectChaos('resource_spike', 0.4)">
+                                Spike Latency (40%)
+                            </button>
+                            <button class="btn btn-premium btn-premium-purple flex-grow-1" onclick="failRegion('us-east-1')">
+                                Fail Region us-east-1
+                            </button>
+                        </div>
+                        <div id="chaosFeedback" class="mt-2 small font-monospace toast-feedback"></div>
+                    </div>
+                </div>
+
+                <!-- Replay explorer tool -->
+                <div class="premium-card">
+                    <div class="card-title-bar">Deterministic Replay Explorer</div>
+                    <div class="card-content-body">
+                        <div class="input-group input-group-sm mb-2">
+                            <input type="text" class="form-control bg-dark border-secondary text-light font-monospace"
+                                   id="replayEventId" placeholder="Event UUID (e.g. evt-18b57a)">
+                            <button class="btn btn-info font-monospace text-dark px-3 fw-bold" onclick="replayEvent()">Replay</button>
+                            <button class="btn btn-premium-secondary font-monospace px-3" onclick="replayLatest()">Latest</button>
+                        </div>
+                        <div class="small text-secondary mb-2" style="font-size:0.7rem">Tip: click any event ID in the stream to replay it.</div>
+                        <pre class="bg-dark border border-secondary rounded p-3 font-monospace text-light" id="replayOutput"
+                             style="max-height: 160px; overflow-y: auto; font-size: 0.72rem; margin-bottom: 0;">Reconstruct virtual cluster state at any point-in-time step...</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            crossorigin="anonymous"></script>
+    <script>
+    const API = '/api';
+    let eventFilter = 'all';
+
+    function badgeClass(t) {
+        const colors = {
+            deployment_start: 'bg-primary text-light',
+            deployment_completed: 'bg-success text-light',
+            deployment_failed: 'bg-danger text-light',
+            rollback_initiated: 'bg-warning text-dark',
+            rollback_start: 'bg-warning text-dark',
+            rollback_complete: 'bg-info text-dark',
+            stage_transition: 'bg-primary text-light',
+            health_check: 'bg-secondary text-light',
+            policy_violation: 'bg-danger text-light',
+            governance_decision: 'bg-info text-dark',
+            policy_evaluation: 'bg-secondary text-light',
+            approval_request: 'bg-info text-dark',
+            approval_decision: 'bg-info text-dark',
+            risk_score_transition: 'bg-secondary text-light',
+            snapshot_create: 'bg-dark text-secondary border border-secondary',
+            quarantine_activate: 'bg-purple text-light',
+            quarantine_release: 'bg-info text-dark',
+            abort_received: 'bg-danger text-light',
+            recovery_plan_execute: 'bg-warning text-dark',
+            recovery_plan_complete: 'bg-info text-dark',
+        };
+        return colors[t] || 'bg-secondary text-light';
+    }
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
+            {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]
+        ));
+    }
+
+    function renderHealth(data) {
+        const el = document.getElementById('healthPanel');
+        const total = data.total_servers || 0;
+        const score = data.health_score != null ? data.health_score : 100;
+        let col = 'var(--status-healthy)';
+        if (score < 50) col = 'var(--status-failed)';
+        else if (score < 80) col = 'var(--status-degraded)';
+
+        const pill = document.getElementById('healthScorePill');
+        pill.textContent = `${score.toFixed(0)} SCORE`;
+        pill.className = 'status-pill ' + (score < 50 ? 'pill-failed' : score < 80 ? 'pill-degraded' : 'pill-healthy');
+
+        el.innerHTML = `
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="score-ring" style="--val:${score}; --col:${col};">
+                    <div class="score-ring-inner">
+                        <div>
+                            <div class="fw-bold font-monospace" style="font-size:1.15rem; line-height:1;">${score.toFixed(0)}</div>
+                            <div class="text-secondary" style="font-size:0.55rem; letter-spacing:0.05em;">HEALTH</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="row g-2 text-center">
+                        <div class="col-3"><div class="metric-tile"><div class="fw-bold text-success font-monospace">${data.healthy}</div><div class="text-secondary" style="font-size:0.6rem">HEALTHY</div></div></div>
+                        <div class="col-3"><div class="metric-tile"><div class="fw-bold text-primary font-monospace">${data.updating||0}</div><div class="text-secondary" style="font-size:0.6rem">UPDATING</div></div></div>
+                        <div class="col-3"><div class="metric-tile"><div class="fw-bold text-warning font-monospace">${data.degraded}</div><div class="text-secondary" style="font-size:0.6rem">DEGRADED</div></div></div>
+                        <div class="col-3"><div class="metric-tile"><div class="fw-bold text-danger font-monospace">${data.failed}</div><div class="text-secondary" style="font-size:0.6rem">FAILED</div></div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="progress mb-2" style="height:10px; background-color: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius:5px;">
+                <div class="progress-bar bg-success" style="width:${total?data.healthy/total*100:0}%"></div>
+                <div class="progress-bar bg-primary" style="width:${total?(data.updating||0)/total*100:0}%"></div>
+                <div class="progress-bar bg-warning" style="width:${total?data.degraded/total*100:0}%"></div>
+                <div class="progress-bar bg-danger" style="width:${total?data.failed/total*100:0}%"></div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center text-secondary small">
+                <span>Active rollout coverage</span>
+                <span class="font-monospace">${(data.rollout_percentage||0).toFixed(0)}% · ${total} nodes</span>
+            </div>
+        `;
+    }
+
+    function renderGovernance(gov) {
+        const el = document.getElementById('governancePanel');
+        const cat = gov.risk_category || 'LOW';
+        const pillCls = cat === 'CRITICAL' || cat === 'HIGH' ? 'pill-failed' : cat === 'MEDIUM' ? 'pill-degraded' : 'pill-healthy';
+
+        const wp = document.getElementById('windowPill');
+        if (gov.restricted_window) { wp.className = 'status-pill pill-failed'; wp.textContent = 'WINDOW LOCKED'; }
+        else { wp.className = 'status-pill pill-healthy'; wp.textContent = 'WINDOW OPEN'; }
+
+        const lastDecision = (gov.recent_decisions && gov.recent_decisions.length)
+            ? gov.recent_decisions[gov.recent_decisions.length - 1] : null;
+        const decColor = lastDecision && lastDecision.decision !== 'ALLOW' ? 'text-danger' : 'text-success';
+
+        const qRegions = gov.quarantined_regions || [];
+        const qHtml = qRegions.length
+            ? qRegions.map(r => `<span class="status-pill pill-quarantine me-1" style="font-size:0.62rem;">${esc(r)}</span>`).join('')
+            : '<span class="text-secondary small">None</span>';
+
+        el.innerHTML = `
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div>
+                    <div class="small text-secondary fw-semibold">Live Risk Vector</div>
+                    <div class="d-flex align-items-baseline gap-2">
+                        <span class="fs-2 fw-bold font-monospace">${gov.risk_score}</span>
+                        <span class="status-pill ${pillCls}">${cat}</span>
+                    </div>
+                </div>
+                <div class="text-end">
+                    <div class="small text-secondary">Change window</div>
+                    <div class="small ${gov.restricted_window?'text-danger':'text-success'}">${esc(gov.restricted_reason||'')}</div>
+                </div>
+            </div>
+            <div class="gov-row"><span class="text-secondary">Last decision</span>
+                <span class="${decColor} font-monospace">${lastDecision ? esc(lastDecision.decision) : '—'}</span></div>
+            <div class="gov-row"><span class="text-secondary">Policy violations</span>
+                <span class="font-monospace ${gov.policy_violations?'text-danger':'text-secondary'}">${gov.policy_violations}</span></div>
+            <div class="gov-row"><span class="text-secondary">Approvals (req / ✓ / ✕)</span>
+                <span class="font-monospace">${gov.approval_requests} / <span class="text-success">${gov.approvals_approved}</span> / <span class="text-danger">${gov.approvals_denied}</span></span></div>
+            <div class="gov-row border-0"><span class="text-secondary">Quarantined regions</span><span>${qHtml}</span></div>
+            ${lastDecision && lastDecision.reason && lastDecision.decision !== 'ALLOW'
+                ? `<div class="small text-danger bg-danger bg-opacity-10 border border-danger border-opacity-10 rounded p-2 mt-2 font-monospace">${esc(lastDecision.reason)}</div>` : ''}
+        `;
+    }
+
+    function renderRollout(cluster) {
+        const el = document.getElementById('rolloutPanel');
+        const card = document.getElementById('rolloutCard');
+        const idLabel = document.getElementById('rolloutIdLabel');
+        const dep = cluster.deployment;
+
+        if (!dep) {
+            card.classList.remove('pulse-active');
+            idLabel.textContent = '';
+            el.innerHTML = `<div class="text-center py-4"><div class="text-secondary small mb-2">Simulation engine idle</div><span class="status-pill pill-healthy">STANDBY</span></div>`;
+            return;
+        }
+
+        if (cluster.rollout_active) card.classList.add('pulse-active');
+        else card.classList.remove('pulse-active');
+        idLabel.textContent = '#' + dep.deployment_id;
+
+        const pct = dep.progress_percentage || 0;
+        const scMap = {
+            pending: 'pill-degraded', in_progress: 'pill-updating', paused: 'pill-degraded',
+            completed: 'pill-healthy', rolling_back: 'pill-failed', rolled_back: 'pill-quarantine',
+            aborted: 'pill-failed', failed: 'pill-failed'
+        };
+        const pillCls = scMap[dep.status] || 'pill-degraded';
+
+        let timeline = '';
+        const targets = (cluster.stage_targets) || [10,25,50,75,100];
+        const completed = {};
+        (dep.stages || []).forEach(s => { completed[s.target_percentage] = s.health_check_passed; });
+        timeline = targets.map(t => {
+            const done = t in completed;
+            const passed = completed[t];
+            let cls = 'bg-secondary', tip = 'pending';
+            if (done && passed === true) { cls = 'bg-success'; tip = 'passed'; }
+            else if (done && passed === false) { cls = 'bg-danger'; tip = 'failed'; }
+            else if (done) { cls = 'bg-primary'; tip = 'executed'; }
+            return `<div class="text-center flex-fill"><span class="badge ${cls} font-monospace" style="font-size:0.62rem;" title="${tip}">${t}%</span></div>`;
+        }).join('<div class="flex-fill border-top align-self-center mx-1" style="border-color:var(--border-hover)!important; height:0;"></div>');
+
+        el.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="status-pill ${pillCls}">${esc(dep.status)}</span>
+                <span class="small font-monospace text-secondary">${esc(dep.source_version)} &rarr; ${esc(dep.target_version)}</span>
+            </div>
+            <div class="premium-progress mb-3">
+                <div class="premium-progress-bar" style="width:${Math.max(pct,4)}%">
+                    <span class="font-monospace text-light" style="font-size:0.7rem;">${pct.toFixed(0)}%</span>
+                </div>
+            </div>
+            <div class="d-flex align-items-center mb-3">${timeline}</div>
+            <div class="d-flex flex-column gap-1 small text-secondary">
+                <div class="d-flex justify-content-between font-monospace"><span>Nodes updated</span><span>${dep.servers_updated_count} / ${dep.total_servers}</span></div>
+                <div class="d-flex justify-content-between font-monospace"><span>Elapsed</span><span>${dep.duration_seconds.toFixed(1)}s</span></div>
+            </div>
+            ${dep.error_message ? `<div class="small text-danger border border-danger border-opacity-10 bg-danger bg-opacity-10 rounded p-2 mt-2 font-monospace">${esc(dep.error_message)}</div>` : ''}
+        `;
+    }
+
+    function renderRegions(cluster) {
+        const el = document.getElementById('regionsPanel');
+        const regions = cluster.regions || {};
+        const quarantined = new Set(cluster.quarantined_regions || []);
+        const keys = Object.keys(regions).sort();
+        document.getElementById('nodeTotalLabel').textContent = cluster.total_servers || 0;
+
+        if (keys.length === 0) { el.innerHTML = '<div class="text-center py-4 text-secondary">No regions indexed.</div>'; return; }
+
+        el.innerHTML = keys.map(r => {
+            const servers = regions[r];
+            const isQ = quarantined.has(r);
+            const counts = {healthy:0, degraded:0, failed:0, updating:0};
+            servers.forEach(s => { counts[s.status] = (counts[s.status]||0)+1; });
+
+            const dots = servers.map(s => {
+                let cls = 'node-' + s.status;
+                if (isQ) cls += ' node-quarantined';
+                return `<span class="server-node ${cls}" title="${esc(s.id)} · ${esc(s.status)} · v${esc(s.current_version)} · cpu ${s.cpu_usage}%"></span>`;
+            }).join('');
+
+            const versions = {};
+            servers.forEach(s => { versions[s.current_version] = (versions[s.current_version]||0)+1; });
+            const vStr = Object.entries(versions).map(([v,c])=>`v${esc(v)} (${c})`).join(' · ');
+
+            return `
+                <div class="col-md-6 col-xxl-3">
+                    <div class="region-card-premium ${isQ?'region-quarantined':''}">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold text-light" style="font-size:0.85rem">${esc(r.toUpperCase())}</span>
+                            ${isQ?'<span class="status-pill pill-quarantine">ISOLATED</span>':`<span class="text-secondary" style="font-size:0.7rem">${servers.length} nodes</span>`}
+                        </div>
+                        <div class="server-grid">${dots}</div>
+                        <div class="small text-secondary font-monospace" style="font-size:0.66rem; margin-bottom:6px;">${vStr}</div>
+                        <div class="d-flex justify-content-between align-items-center border-top border-secondary border-opacity-10 pt-2" style="font-size:0.7rem">
+                            <span class="text-success">${counts.healthy} ok</span>
+                            <span class="text-primary">${counts.updating} upd</span>
+                            <span class="text-warning">${counts.degraded} deg</span>
+                            <span class="text-danger">${counts.failed} fail</span>
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function eventMatchesFilter(e) {
+        if (eventFilter === 'all') return true;
+        const t = e.event_type || '';
+        if (eventFilter === 'critical') return e.severity === 'critical';
+        if (eventFilter === 'rollout') return /^(deployment_|stage_transition|rollback_)/.test(t);
+        if (eventFilter === 'governance') return /^(governance_decision|policy_|approval_|risk_score_transition)/.test(t);
+        if (eventFilter === 'chaos') return (e.details && e.details.chaos_injection) || t === 'quarantine_activate' || t === 'quarantine_release';
+        if (eventFilter === 'health') return t === 'health_check';
+        return true;
+    }
+
+    function eventDetailText(e) {
+        const d = e.details || {};
+        if (d.chaos_injection) return `chaos: ${d.failure_type}${d.region?(' @ '+d.region):''}${d.failure_rate!=null?(' rate '+d.failure_rate):''}`;
+        if (d.region && e.event_type.startsWith('quarantine')) return `region ${d.region}: ${d.reason||''}`;
+        if (d.reason) return d.reason;
+        if (d.message) return d.message;
+        if (d.decision) return `decision: ${d.decision}`;
+        if (d.status) return `status: ${d.status}` + (d.target_percentage!=null?` @ ${d.target_percentage}%`:'');
+        if (d.target_version) return `target: ${d.target_version}`;
+        if (d.snapshot_id) return `snapshot ${d.snapshot_id}`;
+        if (d.plan_id) return `plan ${d.plan_id} (${d.strategy||''})`;
+        if (d.new_category) return `risk → ${d.new_category} (${d.risk_score})`;
+        return '';
+    }
+
+    function renderEvents(events) {
+        const el = document.getElementById('eventLog');
+        document.getElementById('eventCountBadge').textContent = `${events.length} EVENTS`;
+        const filtered = events.filter(eventMatchesFilter);
+        if (filtered.length === 0) {
+            el.innerHTML = '<div class="text-center py-5 text-secondary font-monospace">No events match this filter.</div>';
+            return;
+        }
+        const autoScroll = document.getElementById('autoScrollToggle').checked;
+        const reversed = [...filtered].reverse();
+        el.innerHTML = reversed.map(e => {
+            const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+            let detail = eventDetailText(e);
+            if (detail.length > 160) detail = detail.substring(0, 160) + '…';
+            return `
+                <div class="terminal-row sev-${e.severity||'info'}">
+                    <span class="terminal-ts">${esc(ts)}</span>
+                    <span class="terminal-badge ${badgeClass(e.event_type)}">${esc(e.event_type.replace(/_/g,' '))}</span>
+                    <span class="terminal-body">${esc(detail)}</span>
+                    <span class="terminal-id" onclick="replayFromId('${esc(e.event_id)}')" title="Click to replay this event">${esc(e.event_id)}</span>
+                </div>`;
+        }).join('');
+        if (autoScroll) el.scrollTop = 0;
+    }
+
+    async function fetchJSON(url) { const r = await fetch(url); return r.json(); }
+    async function postJSON(url, body={}) {
+        const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        return r.json();
+    }
+
+    async function refresh() {
+        try {
+            const [cluster, health, governance, events] = await Promise.all([
+                fetchJSON(API+'/cluster'),
+                fetchJSON(API+'/health'),
+                fetchJSON(API+'/governance'),
+                fetchJSON(API+'/events?limit=150'),
+            ]);
+            renderHealth(health);
+            renderGovernance(governance);
+            renderRollout(cluster);
+            renderRegions(cluster);
+            renderEvents(events);
+        } catch(e) { console.error('Refresh failed:', e); }
+    }
+
+    function flash(id, html) { document.getElementById(id).innerHTML = html; }
+    function statusColor(ok) { return ok ? 'success' : 'danger'; }
+
+    async function startRollout() {
+        flash('controlFeedback', '<span class="text-info">Initiating canary rollout thread...</span>');
+        const res = await postJSON(API+'/start_rollout', {target_version:'2.0.0'});
+        const ok = res.status === 'started';
+        flash('controlFeedback', `<span class="text-${statusColor(ok)}">${esc((res.status||'').toUpperCase())}: ${esc(res.message||res.target_version||'')}</span>`);
+        refresh();
+    }
+
+    async function triggerRollback() {
+        flash('controlFeedback', '<span class="text-warning">Reverting cluster version vector...</span>');
+        const res = await postJSON(API+'/rollback');
+        const ok = res.status === 'rolled_back' || res.status === 'aborting';
+        const msg = res.message || ('Reverted ' + (res.servers_reverted||0) + ' servers');
+        flash('controlFeedback', `<span class="text-${statusColor(ok)}">${esc((res.status||'').toUpperCase())}: ${esc(msg)}</span>`);
+        refresh();
+    }
+
+    async function resetSimulator() {
+        flash('controlFeedback', '<span class="text-info">Resetting cluster...</span>');
+        const res = await postJSON(API+'/reset');
+        const ok = res.status === 'reset';
+        flash('controlFeedback', `<span class="text-${statusColor(ok)}">${ok ? 'RESET SUCCESSFUL' : 'ERROR: ' + esc(res.message||'')}</span>`);
+        refresh();
+    }
+
+    async function injectChaos(type, rate) {
+        flash('chaosFeedback', '<span class="text-danger">Injecting chaos...</span>');
+        const res = await postJSON(API+'/inject_failure', {failure_type:type, failure_rate:rate});
+        const ok = res.status === 'injected';
+        let msg = ok ? `${res.affected_count||0} nodes affected` : esc(res.message||'');
+        if (ok && res.quarantined_regions && res.quarantined_regions.length) msg += ` · quarantined ${res.quarantined_regions.join(', ')}`;
+        flash('chaosFeedback', `<span class="text-${ok?'warning':'danger'}">${esc((res.status||'').toUpperCase())}: ${msg}</span>`);
+        refresh();
+    }
+
+    async function failRegion(region) {
+        flash('chaosFeedback', `<span class="text-danger">Failing region ${esc(region)}...</span>`);
+        const res = await postJSON(API+'/scenario', {name:'regional_failure', region});
+        const ok = res.status === 'region_failed';
+        const msg = ok ? `${res.affected_count} nodes down · quarantined ${(res.quarantined_regions||[]).join(', ')||'none'}` : esc(res.message||'');
+        flash('chaosFeedback', `<span class="text-${ok?'warning':'danger'}">${esc((res.status||'').toUpperCase())}: ${msg}</span>`);
+        refresh();
+    }
+
+    async function runScenario(name, btn) {
+        if (btn) { btn.disabled = true; setTimeout(()=>{ if(btn) btn.disabled=false; }, 1200); }
+        flash('scenarioFeedback', `<span class="text-info">Launching ${esc(name.replace(/_/g,' '))}...</span>`);
+        const res = await postJSON(API+'/scenario', {name});
+        flash('scenarioFeedback', `<span class="text-info">${esc((res.status||'').toUpperCase())}: ${esc(res.message||res.region||res.target_version||'running')}</span>`);
+        refresh();
+    }
+
+    async function replayEvent() {
+        const eid = document.getElementById('replayEventId').value.trim();
+        const out = document.getElementById('replayOutput');
+        if (!eid) { out.textContent = 'Please provide an Event UUID.'; return; }
+        out.textContent = 'Replaying audit timeline...';
+        const res = await fetchJSON(API+'/replay/'+encodeURIComponent(eid));
+        out.textContent = JSON.stringify(res, null, 2);
+    }
+
+    function replayFromId(eid) {
+        document.getElementById('replayEventId').value = eid;
+        replayEvent();
+        document.getElementById('replayOutput').scrollIntoView({behavior:'smooth', block:'nearest'});
+    }
+
+    async function replayLatest(btn) {
+        if (btn) { btn.disabled = true; setTimeout(()=>{ if(btn) btn.disabled=false; }, 1000); }
+        const out = document.getElementById('replayOutput');
+        out.textContent = 'Reconstructing latest incident state...';
+        const res = await fetchJSON(API+'/replay_latest');
+        if (res.event_id) document.getElementById('replayEventId').value = res.event_id;
+        out.textContent = JSON.stringify(res, null, 2);
+        flash('scenarioFeedback', `<span class="text-info">REPLAY: reconstructed ${esc(res.event_id||'latest')}</span>`);
+    }
+
+    function setFilter(f, el) {
+        eventFilter = f;
+        document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        if (el) el.classList.add('active');
+        refresh();
+    }
+
+    function updateClock() { document.getElementById('clockDisplay').textContent = new Date().toLocaleString(); }
+
+    setInterval(refresh, 1000);
+    setInterval(updateClock, 1000);
+    updateClock();
+    refresh();
+    </script>
+</body>
+</html>

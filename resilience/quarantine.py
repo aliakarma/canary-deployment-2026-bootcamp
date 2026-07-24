@@ -40,7 +40,9 @@ class RegionQuarantineSystem:
             logger.warning(
                 "REGION QUARANTINED: region '%s' is now isolated. Reason: %s", region, reason
             )
-            return state
+            import copy
+
+            return copy.deepcopy(state)
 
     def release_region(self, region: str, metadata: Dict[str, Any] | None = None) -> bool:
         """Release a region from quarantine, returning it to service."""
@@ -108,4 +110,6 @@ class RegionQuarantineSystem:
     def get_all_quarantine_states(self) -> List[QuarantineState]:
         """Retrieve a copy of all current quarantine records."""
         with self._lock:
-            return list(self._quarantines.values())
+            import copy
+
+            return [copy.deepcopy(s) for s in self._quarantines.values()]

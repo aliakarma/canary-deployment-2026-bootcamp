@@ -148,7 +148,8 @@ class DeploymentState:
     @property
     def duration_seconds(self) -> float:
         """Return total elapsed seconds (or time since start if still running)."""
-        end = self.completed_at or datetime.now()
+        tz = self.started_at.tzinfo
+        end = self.completed_at or datetime.now(tz)
         return (end - self.started_at).total_seconds()
 
     # ------------------------------------------------------------------
